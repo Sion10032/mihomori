@@ -1,4 +1,4 @@
-// Package tui implements the interactive terminal UI for mihomo-tui.
+// Package tui implements the interactive terminal UI for mihomori-tui.
 package tui
 
 import (
@@ -7,15 +7,15 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 
-	"metacubexd-server-go/internal/tui/client"
-	"metacubexd-server-go/internal/tui/components"
-	"metacubexd-server-go/internal/tui/pages/connections"
-	"metacubexd-server-go/internal/tui/pages/kernel"
-	"metacubexd-server-go/internal/tui/pages/logs"
-	"metacubexd-server-go/internal/tui/pages/profiles"
-	"metacubexd-server-go/internal/tui/pages/proxies"
-	"metacubexd-server-go/internal/tui/shared"
-	"metacubexd-server-go/internal/api"
+	"mihomori/internal/tui/client"
+	"mihomori/internal/tui/components"
+	"mihomori/internal/tui/pages/connections"
+	"mihomori/internal/tui/pages/kernel"
+	"mihomori/internal/tui/pages/logs"
+	"mihomori/internal/tui/pages/profiles"
+	"mihomori/internal/tui/pages/proxies"
+	"mihomori/internal/tui/shared"
+	"mihomori/internal/api"
 )
 
 // Tab indices.

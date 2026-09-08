@@ -21,10 +21,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"metacubexd-server-go/internal/api"
-	"metacubexd-server-go/internal/server/profile"
-	"metacubexd-server-go/internal/server/sse"
-	"metacubexd-server-go/internal/server/supervisor"
+	"mihomori/internal/api"
+	"mihomori/internal/server/profile"
+	"mihomori/internal/server/sse"
+	"mihomori/internal/server/supervisor"
 )
 
 // Info describes the server to the dashboard. The shape mirrors the TS

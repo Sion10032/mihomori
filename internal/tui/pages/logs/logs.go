@@ -10,8 +10,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"metacubexd-server-go/internal/tui/client"
-	"metacubexd-server-go/internal/tui/shared"
+	"mihomori/internal/tui/client"
+	"mihomori/internal/tui/shared"
 )
 
 // maxLogLines caps the retained log lines to bound memory; the viewport only

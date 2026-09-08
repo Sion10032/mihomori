@@ -8,8 +8,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"gopkg.in/yaml.v3"
 
-	"metacubexd-server-go/internal/tui/components"
-	"metacubexd-server-go/internal/tui/shared"
+	"mihomori/internal/tui/components"
+	"mihomori/internal/tui/shared"
 )
 
 // editModal is the single-value network-field editor popup.

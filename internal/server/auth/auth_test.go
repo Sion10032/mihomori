@@ -71,9 +71,9 @@ func TestLoginSuccessForm(t *testing.T) {
 				t.Errorf("Path = %q, want /", c.Path)
 			}
 		}
-		if c.Name == "metacubexd_next" {
+		if c.Name == "mihomori_next" {
 			if c.MaxAge >= 0 {
-				t.Error("metacubexd_next not cleared on login")
+				t.Error("mihomori_next not cleared on login")
 			}
 		}
 	}
@@ -180,7 +180,7 @@ func TestBearerAuth(t *testing.T) {
 
 // TestUnauthedSameOriginGETRedirects: a same-origin browser navigation
 // (Accept: text/html) without a cookie should 302 to /login (the smooth
-// UX path) and stash the destination in metacubexd_next.
+// UX path) and stash the destination in mihomori_next.
 func TestUnauthedSameOriginGETRedirects(t *testing.T) {
 	mw := New(Config{ControlToken: "s3cret"})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("downstream should not be hit")
@@ -202,18 +202,18 @@ func TestUnauthedSameOriginGETRedirects(t *testing.T) {
 	// Verify the destination was stashed for post-login redirect.
 	var next string
 	for _, c := range w.Result().Cookies() {
-		if c.Name == "metacubexd_next" {
+		if c.Name == "mihomori_next" {
 			next = c.Value
 		}
 	}
 	if next != "/overview" {
-		t.Errorf("metacubexd_next = %q, want /overview", next)
+		t.Errorf("mihomori_next = %q, want /overview", next)
 	}
 }
 
 // TestFaviconDoesNotStealNextPath: browsers auto-request /favicon.ico with
 // Accept: image/* on every page load. If we treated that as a navigation and
-// stashed it in metacubexd_next, the cookie would get overwritten and the
+// stashed it in mihomori_next, the cookie would get overwritten and the
 // user would be sent to /favicon.ico after login. Verify favicon gets 401
 // (not a redirect) and does NOT set the next cookie.
 func TestFaviconDoesNotStealNextPath(t *testing.T) {
@@ -230,8 +230,8 @@ func TestFaviconDoesNotStealNextPath(t *testing.T) {
 		t.Fatalf("status = %d, want 401 (favicon is not a navigation)", w.Code)
 	}
 	for _, c := range w.Result().Cookies() {
-		if c.Name == "metacubexd_next" {
-			t.Errorf("favicon request set metacubexd_next = %q (would hijack post-login redirect)", c.Value)
+		if c.Name == "mihomori_next" {
+			t.Errorf("favicon request set mihomori_next = %q (would hijack post-login redirect)", c.Value)
 		}
 	}
 }

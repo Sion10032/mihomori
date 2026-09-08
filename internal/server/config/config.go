@@ -37,7 +37,7 @@ type ServerEnv struct {
 
 	// DataDir holds profiles/, active.yaml, geo caches, fake-ip cache.
 	// Default "data" — resolved against the server's working directory, so a
-	// bare `./metacubexd-server` invocation keeps its state local. Container
+	// bare `./mihomori` invocation keeps its state local. Container
 	// deployments override with DATA_DIR=/data (the Dockerfile VOLUME).
 	DataDir string
 

@@ -7,9 +7,9 @@ import (
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"metacubexd-server-go/internal/tui/client"
-	"metacubexd-server-go/internal/tui/components"
-	"metacubexd-server-go/internal/tui/shared"
+	"mihomori/internal/tui/client"
+	"mihomori/internal/tui/components"
+	"mihomori/internal/tui/shared"
 )
 
 // TestNetworkSettingsFrom verifies mihomo's live /configs response is

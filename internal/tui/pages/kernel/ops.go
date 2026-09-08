@@ -7,9 +7,9 @@ import (
 
 	"charm.land/bubbles/v2/spinner"
 
-	"metacubexd-server-go/internal/tui/client"
-	"metacubexd-server-go/internal/tui/shared"
-	"metacubexd-server-go/internal/api"
+	"mihomori/internal/tui/client"
+	"mihomori/internal/tui/shared"
+	"mihomori/internal/api"
 )
 
 // kernelOp is one operation available on the Config tab, in selection order.

@@ -3,7 +3,7 @@ package profiles
 import (
 	tea "charm.land/bubbletea/v2"
 
-	"metacubexd-server-go/internal/tui/shared"
+	"mihomori/internal/tui/shared"
 )
 
 // updateConfirmDel handles the delete-confirmation prompt: y confirms the

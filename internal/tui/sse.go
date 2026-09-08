@@ -5,7 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"metacubexd-server-go/internal/tui/shared"
+	"mihomori/internal/tui/shared"
 )
 
 // closeLogStream cancels the SSE subscription so its goroutine and HTTP

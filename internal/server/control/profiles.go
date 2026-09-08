@@ -24,8 +24,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"metacubexd-server-go/internal/api"
-	"metacubexd-server-go/internal/server/profile"
+	"mihomori/internal/api"
+	"mihomori/internal/server/profile"
 )
 
 // registerProfileRoutes wires every /profiles/** route onto r. Called from

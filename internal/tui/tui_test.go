@@ -11,11 +11,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"metacubexd-server-go/internal/tui/client"
-	"metacubexd-server-go/internal/tui/pages/kernel"
-	"metacubexd-server-go/internal/tui/pages/logs"
-	"metacubexd-server-go/internal/tui/shared"
-	"metacubexd-server-go/internal/api"
+	"mihomori/internal/tui/client"
+	"mihomori/internal/tui/pages/kernel"
+	"mihomori/internal/tui/pages/logs"
+	"mihomori/internal/tui/shared"
+	"mihomori/internal/api"
 )
 
 // TestViewLayout verifies the full layout renders the status bar, the tab bar
@@ -93,7 +93,7 @@ func TestWindowResize(t *testing.T) {
 	if len(lines) != 24 {
 		t.Errorf("layout = %d lines, want 24 (fills the window)", len(lines))
 	}
-	if !strings.HasPrefix(lines[0], "┌") || !strings.Contains(lines[0], "mihomo-tui") {
+	if !strings.HasPrefix(lines[0], "┌") || !strings.Contains(lines[0], "mihomori-tui") {
 		t.Errorf("line 0 = %q, want top border with title", lines[0])
 	}
 	if !strings.Contains(lines[1], "unknown") {
@@ -126,7 +126,7 @@ func TestNarrowScreen(t *testing.T) {
 
 	// Wide enough windows keep the frame.
 	nm, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
-	if got := nm.View().Content; !strings.Contains(got, "┌─ mihomo-tui") {
+	if got := nm.View().Content; !strings.Contains(got, "┌─ mihomori-tui") {
 		t.Errorf("wide view should keep the frame: %q", got)
 	}
 }

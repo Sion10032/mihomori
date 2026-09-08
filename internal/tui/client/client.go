@@ -1,5 +1,5 @@
-// Package client implements the HTTP client and SSE subscription that mihomo-tui
-// uses to talk to a running metacubexd-server (/api/control/*).
+// Package client implements the HTTP client and SSE subscription that mihomori-tui
+// uses to talk to a running mihomori server (/api/control/*).
 package client
 
 import (
@@ -13,14 +13,14 @@ import (
 	"net/url"
 	"time"
 
-	"metacubexd-server-go/internal/api"
+	"mihomori/internal/api"
 )
 
 // ErrUnauthorized is returned when the control API rejects the credentials:
 // the server has auth enabled but the request carried no or an invalid token.
 var ErrUnauthorized = errors.New("unauthorized: token invalid or server requires auth")
 
-// Client talks to the metacubexd-server control API. It is safe for
+// Client talks to the mihomori control API. It is safe for
 // concurrent use once created.
 type Client struct {
 	endpoint string

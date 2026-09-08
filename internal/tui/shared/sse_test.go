@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"metacubexd-server-go/internal/tui/client"
-	"metacubexd-server-go/internal/api"
+	"mihomori/internal/tui/client"
+	"mihomori/internal/api"
 )
 
 // TestFormatLogLine verifies the log line rendering: timestamp, INFO level

@@ -29,8 +29,8 @@ import (
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 
-	"metacubexd-server-go/internal/api"
-	"metacubexd-server-go/internal/server/merge"
+	"mihomori/internal/api"
+	"mihomori/internal/server/merge"
 )
 
 // Profile types. Strings match the TS ProfileType union so the dashboard's

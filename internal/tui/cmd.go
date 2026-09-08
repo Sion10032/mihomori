@@ -4,7 +4,7 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 
-	"metacubexd-server-go/internal/tui/shared"
+	"mihomori/internal/tui/shared"
 )
 
 // updateStatus handles the kernel status messages: fresh states, errors and

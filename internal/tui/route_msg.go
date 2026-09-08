@@ -3,9 +3,9 @@ package tui
 import (
 	tea "charm.land/bubbletea/v2"
 
-	"metacubexd-server-go/internal/tui/pages/kernel"
-	"metacubexd-server-go/internal/tui/pages/profiles"
-	"metacubexd-server-go/internal/tui/pages/proxies"
+	"mihomori/internal/tui/pages/kernel"
+	"mihomori/internal/tui/pages/profiles"
+	"mihomori/internal/tui/pages/proxies"
 )
 
 // updateProfilesMsg routes profile load results and operation outcomes.

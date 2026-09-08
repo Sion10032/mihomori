@@ -8,8 +8,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"metacubexd-server-go/internal/tui/client"
-	"metacubexd-server-go/internal/api"
+	"mihomori/internal/tui/client"
+	"mihomori/internal/api"
 )
 
 // Subscribe opens the SSE log subscription and hands the stream to the model

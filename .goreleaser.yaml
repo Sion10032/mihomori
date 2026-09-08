@@ -1,14 +1,14 @@
 version: 2
 
-project_name: metacubexd-server-go
+project_name: mihomori
 
 before:
   hooks:
     - bash scripts/fetch-ui.sh
 
 builds:
-  - main: ./cmd/metacubexd-server
-    binary: metacubexd-server-go
+  - main: ./cmd/mihomori
+    binary: mihomori
     env:
       - CGO_ENABLED=0
     goos:

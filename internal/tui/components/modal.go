@@ -7,7 +7,7 @@ package components
 import (
 	"charm.land/lipgloss/v2"
 
-	"metacubexd-server-go/internal/tui/shared"
+	"mihomori/internal/tui/shared"
 )
 
 // OverlayModal centers modal over base using lipgloss's compositor, so the

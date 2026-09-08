@@ -1,4 +1,4 @@
-module metacubexd-server-go
+module mihomori
 
 go 1.26.4
 

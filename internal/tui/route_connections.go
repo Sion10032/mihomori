@@ -3,8 +3,8 @@ package tui
 import (
 	tea "charm.land/bubbletea/v2"
 
-	"metacubexd-server-go/internal/tui/pages/connections"
-	"metacubexd-server-go/internal/tui/shared"
+	"mihomori/internal/tui/pages/connections"
+	"mihomori/internal/tui/shared"
 )
 
 // updateConnectionsMsg routes connection load results and operation outcomes

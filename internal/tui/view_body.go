@@ -5,7 +5,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"metacubexd-server-go/internal/tui/shared"
+	"mihomori/internal/tui/shared"
 )
 
 // body renders the active tab's content at the given size, wrapping every

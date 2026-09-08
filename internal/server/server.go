@@ -1,4 +1,4 @@
-// Package server assembles and runs the metacubexd-server. It owns the full
+// Package server assembles and runs the mihomori server. It owns the full
 // lifecycle — from directory creation and component construction through HTTP
 // serving and graceful shutdown — so that cmd/ only handles CLI parsing.
 package server
@@ -15,15 +15,15 @@ import (
 	"syscall"
 	"time"
 
-	"metacubexd-server-go/internal/api"
-	"metacubexd-server-go/internal/server/auth"
-	"metacubexd-server-go/internal/server/clashproxy"
-	"metacubexd-server-go/internal/server/config"
-	"metacubexd-server-go/internal/server/control"
-	"metacubexd-server-go/internal/server/profile"
-	"metacubexd-server-go/internal/server/scheduler"
-	"metacubexd-server-go/internal/server/static"
-	"metacubexd-server-go/internal/server/supervisor"
+	"mihomori/internal/api"
+	"mihomori/internal/server/auth"
+	"mihomori/internal/server/clashproxy"
+	"mihomori/internal/server/config"
+	"mihomori/internal/server/control"
+	"mihomori/internal/server/profile"
+	"mihomori/internal/server/scheduler"
+	"mihomori/internal/server/static"
+	"mihomori/internal/server/supervisor"
 )
 
 // Options holds the configuration needed to start the server.
@@ -179,7 +179,7 @@ func Run(opts Options) error {
 	defer stop()
 
 	go func() {
-		log.Printf("[server] metacubexd-server listening on %s", addr)
+		log.Printf("[server] mihomori listening on %s", addr)
 		log.Printf("[server]   UI_DIST     = %s", uiDistDisplay(env.UIDist))
 		log.Printf("[server]   DATA_DIR    = %s", absPathDisplay(env.DataDir))
 		log.Printf("[server]   Clash API   = %s (internal)", env.ExternalController())

@@ -3,8 +3,8 @@ package shared
 import (
 	"context"
 
-	"metacubexd-server-go/internal/tui/client"
-	"metacubexd-server-go/internal/api"
+	"mihomori/internal/tui/client"
+	"mihomori/internal/api"
 )
 
 // StatusLoadedMsg carries a fresh kernel state from the control API.

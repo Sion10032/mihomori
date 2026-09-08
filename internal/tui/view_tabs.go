@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"metacubexd-server-go/internal/tui/shared"
+	"mihomori/internal/tui/shared"
 )
 
 // renderTabs renders the tab bar from each page's Title, highlighting the

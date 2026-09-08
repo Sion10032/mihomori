@@ -36,7 +36,7 @@ import (
 )
 
 // CookieName is the signed session cookie's name.
-const CookieName = "metacubexd_auth"
+const CookieName = "mihomori_auth"
 
 // sessionTTL bounds how long a login stays valid. 30 days mirrors typical
 // "remember me" semantics; rotating CONTROL_TOKEN invalidates immediately.
@@ -154,7 +154,7 @@ func New(cfg Config) func(http.Handler) http.Handler {
 			if r.Method == http.MethodGet && isSameOrigin(r) && acceptsHTML(r) {
 				// Preserve the intended destination so login bounces back.
 				http.SetCookie(w, &http.Cookie{
-					Name:  "metacubexd_next",
+					Name:  "mihomori_next",
 					Value: r.URL.RequestURI(),
 					Path:  "/",
 					// Short-lived, readable from JS for the redirect. Not sensitive.
@@ -260,7 +260,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request, password string, key []
 	})
 	// Clear the "next" redirect hint.
 	http.SetCookie(w, &http.Cookie{
-		Name:   "metacubexd_next",
+		Name:   "mihomori_next",
 		Value:  "",
 		Path:   "/",
 		MaxAge: -1,
@@ -295,11 +295,11 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`{"ok":true}`))
 }
 
-// nextPath reads the metacubexd_next cookie (or ?next=) to find where to send
+// nextPath reads the mihomori_next cookie (or ?next=) to find where to send
 // the user after login. It's strictly path-only: any absolute URL or scheme
 // is reduced to just its path to avoid open-redirect via crafted cookie.
 func nextPath(r *http.Request) string {
-	if c, err := r.Cookie("metacubexd_next"); err == nil && c.Value != "" {
+	if c, err := r.Cookie("mihomori_next"); err == nil && c.Value != "" {
 		if p := safePath(c.Value); p != "" {
 			return p
 		}
@@ -313,7 +313,7 @@ func nextPath(r *http.Request) string {
 }
 
 // safePath returns the path component of v if it's same-site, else "".
-// Prevents open-redirect: an attacker can't set metacubexd_next to
+// Prevents open-redirect: an attacker can't set mihomori_next to
 // //evil.com because we only honor paths starting with "/" but not "//".
 func safePath(v string) string {
 	if v == "" || v[0] != '/' {
@@ -335,10 +335,10 @@ func safePath(v string) string {
 // signingKey derives the HMAC key from the password. Using the password
 // directly would also work, but a one-way derivation means the cookie tag
 // never leaks the password even hypothetically (defense in depth). The
-// domain-separation prefix ("metacubexd-auth-v1") avoids key reuse if other
+// domain-separation prefix ("mihomori-auth-v1") avoids key reuse if other
 // HMAC uses are added later.
 func signingKey(password string) []byte {
-	mac := hmac.New(sha256.New, []byte("metacubexd-auth-v1"))
+	mac := hmac.New(sha256.New, []byte("mihomori-auth-v1"))
 	mac.Write([]byte(password))
 	// Second derivation: the key used to sign cookies, domain-separated
 	// from the Bearer password check (which compares plaintext directly).

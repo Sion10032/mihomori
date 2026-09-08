@@ -21,7 +21,7 @@ services:
       args:
         METACUBEXD_VERSION: ${METACUBEXD_VERSION}
         MIHOMO_VERSION: ${MIHOMO_VERSION}
-    container_name: metacubexd-server-dev
+    container_name: mihomori-dev
     restart: unless-stopped
     # ── Host networking (default for development) ───────────────────
     # Server binds :8080/:7890/:9090 directly on the host.

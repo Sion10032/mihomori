@@ -11,10 +11,10 @@ import (
 	"charm.land/bubbles/v2/table"
 	tea "charm.land/bubbletea/v2"
 
-	"metacubexd-server-go/internal/tui/client"
-	"metacubexd-server-go/internal/tui/components"
-	"metacubexd-server-go/internal/tui/shared"
-	"metacubexd-server-go/internal/api"
+	"mihomori/internal/tui/client"
+	"mihomori/internal/tui/components"
+	"mihomori/internal/tui/shared"
+	"mihomori/internal/api"
 )
 
 // Model renders the profile list as a table. The active profile is marked

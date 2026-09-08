@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"metacubexd-server-go/internal/server/profile"
-	"metacubexd-server-go/internal/server/supervisor"
+	"mihomori/internal/server/profile"
+	"mihomori/internal/server/supervisor"
 )
 
 // contractRouter builds a minimal Router with real ProfileStore + stub Supervisor.

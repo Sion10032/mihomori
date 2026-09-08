@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"metacubexd-server-go/internal/api"
+	"mihomori/internal/api"
 )
 
 // RenderStatus renders the kernel status bar line: a colored status dot, the

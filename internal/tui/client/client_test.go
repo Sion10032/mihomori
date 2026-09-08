@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"metacubexd-server-go/internal/api"
+	"mihomori/internal/api"
 )
 
 // mustDo performs a request via the client and fails the test on error. The

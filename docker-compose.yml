@@ -14,8 +14,8 @@
 
 services:
   server:
-    image: ghcr.io/sion10032/metacubexd-server-go:latest
-    container_name: metacubexd-server
+    image: ghcr.io/sion10032/mihomori:latest
+    container_name: mihomori
     restart: unless-stopped
     # ── Port mapping (default) ──────────────────────────────────────
     ports:

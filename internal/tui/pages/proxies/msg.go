@@ -1,6 +1,6 @@
 package proxies
 
-import "metacubexd-server-go/internal/tui/client"
+import "mihomori/internal/tui/client"
 
 // ProxiesLoadedMsg is sent when proxies are fetched.
 type ProxiesLoadedMsg struct {

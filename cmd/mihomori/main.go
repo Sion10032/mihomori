@@ -1,4 +1,4 @@
-// Command metacubexd-server is the All-in-One Go binary that replaces the
+// Command mihomori is the All-in-One Go binary that replaces the
 // upstream TS server (apps/server + packages/agent). It serves the dashboard,
 // proxies the Clash API same-origin (HTTP + WebSocket), and supervises the
 // mihomo kernel.
@@ -21,8 +21,8 @@ import (
 	"os"
 	"runtime"
 
-	"metacubexd-server-go/internal/server"
-	"metacubexd-server-go/internal/server/config"
+	"mihomori/internal/server"
+	"mihomori/internal/server/config"
 )
 
 // Populated via -ldflags at build time.
@@ -35,11 +35,11 @@ var (
 func main() {
 	// Handle --version / -v / version before any side effects. The full
 	// server must not start when the caller just wants the version string
-	// (e.g. metacubexd-ctl.sh update checks the installed binary this way).
+	// (e.g. mihomori-ctl.sh update checks the installed binary this way).
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "--version", "-v", "version":
-			fmt.Printf("metacubexd-server-go %s (commit: %s, built: %s) %s/%s\n",
+			fmt.Printf("mihomori %s (commit: %s, built: %s) %s/%s\n",
 				version, commit, date, runtime.GOOS, runtime.GOARCH)
 			return
 		case "-h", "--help", "help":
@@ -48,7 +48,7 @@ func main() {
 		}
 	}
 
-	log.Printf("[server] metacubexd-server-go %s (commit: %s, built: %s)", version, commit, date)
+	log.Printf("[server] mihomori %s (commit: %s, built: %s)", version, commit, date)
 
 	if err := server.Run(server.Options{
 		Env:     config.FromEnv(),
@@ -62,10 +62,10 @@ func main() {
 
 // printUsage writes the CLI help text to stdout.
 func printUsage() {
-	fmt.Printf(`metacubexd-server-go %s
+	fmt.Printf(`mihomori %s
 
 Usage:
-  metacubexd-server [flags]
+  mihomori [flags]
 
 Flags:
   -h, --help     show this help

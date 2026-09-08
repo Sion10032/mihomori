@@ -3,7 +3,7 @@ package connections
 import (
 	tea "charm.land/bubbletea/v2"
 
-	"metacubexd-server-go/internal/tui/client"
+	"mihomori/internal/tui/client"
 )
 
 // FetchConnections returns a command that fetches all connections.

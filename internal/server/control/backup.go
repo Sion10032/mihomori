@@ -16,9 +16,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"metacubexd-server-go/internal/server/kernel"
-	"metacubexd-server-go/internal/server/profile"
-	"metacubexd-server-go/internal/server/webdav"
+	"mihomori/internal/server/kernel"
+	"mihomori/internal/server/profile"
+	"mihomori/internal/server/webdav"
 )
 
 // backupFilename is the bundle's name on the WebDAV server. Same as the TS

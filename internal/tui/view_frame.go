@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"metacubexd-server-go/internal/tui/client"
-	"metacubexd-server-go/internal/tui/shared"
+	"mihomori/internal/tui/client"
+	"mihomori/internal/tui/shared"
 )
 
 // frameView renders the framed layout: bordered box with a title, status bar,
@@ -40,7 +40,7 @@ func (m Model) frameView() string {
 	// Second status line: the active profile summary.
 	activeLine := m.profilesPage().ActiveSummary()
 
-	title := " mihomo-tui · " + m.client.Endpoint() + " "
+	title := " mihomori-tui · " + m.client.Endpoint() + " "
 	// TEMP diagnostic: show the resolved window size until the short-window
 	// report is confirmed — remove once verified.
 	size := fmt.Sprintf(" %dx%d ", w, h)

@@ -1,6 +1,6 @@
 package profiles
 
-import "metacubexd-server-go/internal/api"
+import "mihomori/internal/api"
 
 // ProfilesLoadedMsg carries the fetched profile list.
 type ProfilesLoadedMsg struct {

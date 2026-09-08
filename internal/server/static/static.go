@@ -295,11 +295,11 @@ const stubIndexHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>metacubexd server (no UI)</title>
+<title>mihomori (no UI)</title>
 <style>body{font:14px/1.5 -apple-system,system-ui,sans-serif;margin:2rem;max-width:48rem;color:#333}code{background:#f4f4f4;padding:.15rem .3rem;border-radius:3px}</style>
 </head>
 <body>
-<h1>metacubexd server is running — but no dashboard is bundled</h1>
+<h1>mihomori is running — but no dashboard is bundled</h1>
 <p>This binary was built without an embedded UI, and <code>UI_DIST</code> is not set.</p>
 <p>To serve the dashboard, either:</p>
 <ul>

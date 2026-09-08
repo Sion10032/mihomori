@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"metacubexd-server-go/internal/server/profile"
-	"metacubexd-server-go/internal/server/supervisor"
+	"mihomori/internal/server/profile"
+	"mihomori/internal/server/supervisor"
 )
 
 // Options configures the scheduler. ProfileStore + Supervisor are required.

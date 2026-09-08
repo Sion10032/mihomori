@@ -7,8 +7,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"metacubexd-server-go/internal/tui/components"
-	"metacubexd-server-go/internal/tui/shared"
+	"mihomori/internal/tui/components"
+	"mihomori/internal/tui/shared"
 )
 
 // Config modes select which config the viewport shows.

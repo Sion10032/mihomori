@@ -1,4 +1,4 @@
-# Multi-stage build for metacubexd-server-go (All-in-One).
+# Multi-stage build for mihomori (All-in-One).
 #
 # Build args (all default to empty = official sources):
 #   METACUBEXD_VERSION / MIHOMO_VERSION  — pin UI/kernel release tags
@@ -24,7 +24,7 @@ ARG VERSION=dev
 ARG COMMIT=none
 RUN CGO_ENABLED=0 go build -trimpath \
     -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
-    -o /out/metacubexd-server ./cmd/metacubexd-server
+    -o /out/mihomori ./cmd/mihomori
 
 # ─── stage 2: assemble runtime with UI + mihomo ─────────────────────────────
 FROM alpine:3.24 AS assets
@@ -61,13 +61,13 @@ RUN if [ -n "$APK_MIRROR" ]; then \
     fi && \
     apk add --no-cache tzdata ca-certificates util-linux
 
-COPY --from=build /out/metacubexd-server /app/metacubexd-server
+COPY --from=build /out/mihomori /app/mihomori
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 COPY --from=assets /ui /ui
 COPY --from=assets /bin/mihomo /usr/local/bin/mihomo
 
 RUN mkdir -p /data /app && \
-    chmod +x /app/docker-entrypoint.sh /app/metacubexd-server
+    chmod +x /app/docker-entrypoint.sh /app/mihomori
 
 ENV CONTROL_PORT=8080 \
     CLASH_API_PORT=9090 \
@@ -79,4 +79,4 @@ ENV CONTROL_PORT=8080 \
 EXPOSE 8080 7890
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
-CMD ["/app/metacubexd-server"]
+CMD ["/app/mihomori"]

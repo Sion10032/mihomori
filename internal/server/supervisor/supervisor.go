@@ -24,7 +24,7 @@ import (
 	"syscall"
 	"time"
 
-	"metacubexd-server-go/internal/api"
+	"mihomori/internal/api"
 
 	"gopkg.in/yaml.v3"
 )

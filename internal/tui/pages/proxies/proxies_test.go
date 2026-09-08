@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"metacubexd-server-go/internal/tui/client"
+	"mihomori/internal/tui/client"
 )
 
 // TestProxiesListRender verifies that the view shows proxy-groups and excludes GLOBAL.

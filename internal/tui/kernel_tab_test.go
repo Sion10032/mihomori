@@ -10,9 +10,9 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 
-	"metacubexd-server-go/internal/tui/client"
-	"metacubexd-server-go/internal/tui/pages/kernel"
-	"metacubexd-server-go/internal/tui/shared"
+	"mihomori/internal/tui/client"
+	"mihomori/internal/tui/pages/kernel"
+	"mihomori/internal/tui/shared"
 )
 
 // runBatch executes every command in a batch, returning the produced messages.

@@ -10,8 +10,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"metacubexd-server-go/internal/tui/client"
-	"metacubexd-server-go/internal/tui/shared"
+	"mihomori/internal/tui/client"
+	"mihomori/internal/tui/shared"
 )
 
 // TestSSEToView runs the real subscribe → event pump → model chain against a

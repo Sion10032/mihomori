@@ -9,7 +9,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"metacubexd-server-go/internal/api"
+	"mihomori/internal/api"
 )
 
 // Theme styles, rebuilt by SetTheme once the terminal background (dark vs

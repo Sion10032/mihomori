@@ -1,6 +1,6 @@
 package connections
 
-import "metacubexd-server-go/internal/tui/client"
+import "mihomori/internal/tui/client"
 
 // ConnectionsLoadedMsg is sent when connections are fetched.
 type ConnectionsLoadedMsg struct {

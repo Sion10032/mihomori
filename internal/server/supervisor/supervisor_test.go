@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"metacubexd-server-go/internal/api"
+	"mihomori/internal/api"
 )
 
 var fakeMihomoPath string
