@@ -1,8 +1,8 @@
 #!/bin/bash
-# metacubexd-ctl.sh — Manage metacubexd-server as a systemd or OpenRC service.
+# mihomori-ctl.sh — Manage mihomori as a systemd or OpenRC service.
 #
 # Usage:
-#   metacubexd-ctl.sh <command> [options]
+#   mihomori-ctl.sh <command> [options]
 #
 # Commands:
 #   install   Install the service (binary + service files + config + start)
@@ -17,8 +17,8 @@
 #   --secret <string>     Set CLASH_SECRET (default: random)
 #
 # Uninstall options:
-#   --keep-data   Keep /var/lib/metacubexd (default: keep)
-#   --keep-user   Keep the metacubexd system user (default: keep)
+#   --keep-data   Keep /var/lib/mihomori (default: keep)
+#   --keep-user   Keep the mihomori system user (default: keep)
 #
 # Update options:
 #   --bin <path>          Use a local pre-built binary
@@ -31,16 +31,16 @@
 #   get <KEY>             Print a single configuration value
 #
 # Examples:
-#   metacubexd-ctl.sh install                                  # download latest
-#   metacubexd-ctl.sh install --bin ./metacubexd-server-go     # local binary
-#   metacubexd-ctl.sh install --version v1.2.3                 # pin version
-#   metacubexd-ctl.sh update                                  # upgrade to latest
-#   metacubexd-ctl.sh update --version v1.3.0                  # pin version
-#   metacubexd-ctl.sh update --force                           # force re-download
-#   metacubexd-ctl.sh config show                              # view config
-#   metacubexd-ctl.sh config set MIXED_PORT=8080               # change port
-#   metacubexd-ctl.sh config get CONTROL_TOKEN                 # view token
-#   metacubexd-ctl.sh uninstall                                # remove service
+#   mihomori-ctl.sh install                                  # download latest
+#   mihomori-ctl.sh install --bin ./mihomori     # local binary
+#   mihomori-ctl.sh install --version v1.2.3                 # pin version
+#   mihomori-ctl.sh update                                  # upgrade to latest
+#   mihomori-ctl.sh update --version v1.3.0                  # pin version
+#   mihomori-ctl.sh update --force                           # force re-download
+#   mihomori-ctl.sh config show                              # view config
+#   mihomori-ctl.sh config set MIXED_PORT=8080               # change port
+#   mihomori-ctl.sh config get CONTROL_TOKEN                 # view token
+#   mihomori-ctl.sh uninstall                                # remove service
 #
 # Requires: root, curl, tar, and either systemd or OpenRC.
 
@@ -49,12 +49,12 @@ set -euo pipefail
 # ── Constants ─────────────────────────────────────────────────────────────
 
 OWNER="Sion10032"
-REPO="metacubexd-server-go"
-SERVICE_BIN="/usr/local/bin/metacubexd-server"
-SERVICE_NAME="metacubexd"
-SYSTEM_USER="metacubexd"
-CONF_DIR="/etc/metacubexd"
-DATA_DIR="/var/lib/metacubexd"
+REPO="mihomori"
+SERVICE_BIN="/usr/local/bin/mihomori"
+SERVICE_NAME="mihomori"
+SYSTEM_USER="mihomori"
+CONF_DIR="/etc/mihomori"
+DATA_DIR="/var/lib/mihomori"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ── Colors ────────────────────────────────────────────────────────────────
@@ -188,8 +188,8 @@ install_binary_download() {
 
     tar -xzf "${tmpdir}/release.tar.gz" -C "${tmpdir}"
 
-    # The tarball contains the binary as metacubexd-server-go; rename.
-    local extracted="${tmpdir}/metacubexd-server-go"
+    # The tarball contains the binary as mihomori; rename.
+    local extracted="${tmpdir}/mihomori"
     if [ ! -f "${extracted}" ]; then
         extracted="$(find "${tmpdir}" -maxdepth 1 -type f -executable | head -1)"
         [ -n "${extracted}" ] || die "Could not find binary in downloaded tarball."
@@ -239,19 +239,19 @@ install_service_systemd() {
     # Systemd unit (embedded)
     cat > /etc/systemd/system/${SERVICE_NAME}.service << 'SYSTEMD_UNIT'
 [Unit]
-Description=metacubexd-server (All-in-One dashboard + mihomo supervisor)
-Documentation=https://github.com/Sion10032/metacubexd-server-go
+Description=mihomori (All-in-One dashboard + mihomo supervisor)
+Documentation=https://github.com/Sion10032/mihomori
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=metacubexd
-Group=metacubexd
-EnvironmentFile=-/etc/metacubexd/metacubexd.env
-Environment=DATA_DIR=/var/lib/metacubexd
+User=mihomori
+Group=mihomori
+EnvironmentFile=-/etc/mihomori/mihomori.env
+Environment=DATA_DIR=/var/lib/mihomori
 Environment=MIHOMO_BIN=/usr/local/bin/mihomo
-ExecStart=/usr/local/bin/metacubexd-server
+ExecStart=/usr/local/bin/mihomori
 TimeoutStopSec=15
 KillSignal=SIGTERM
 Restart=on-failure
@@ -259,7 +259,7 @@ RestartSec=5
 AmbientCapabilities=CAP_NET_ADMIN
 CapabilityBoundingSet=CAP_NET_ADMIN
 NoNewPrivileges=true
-StateDirectory=metacubexd
+StateDirectory=mihomori
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
@@ -274,7 +274,7 @@ SYSTEMD_UNIT
         info "Existing env file at ${CONF_DIR}/${SERVICE_NAME}.env — keeping."
     else
         cat > "${CONF_DIR}/${SERVICE_NAME}.env" << 'ENV_SAMPLE'
-# metacubexd-server env — see README.md for full variable list.
+# mihomori env — see README.md for full variable list.
 # Only non-default values need to be set.
 CONTROL_TOKEN=
 CLASH_SECRET=
@@ -294,14 +294,14 @@ install_service_openrc() {
     # OpenRC init script (embedded)
     cat > /etc/init.d/${SERVICE_NAME} << 'OPENRC_INIT'
 #!/sbin/openrc-run
-description="metacubexd-server (All-in-One dashboard + mihomo supervisor)"
+description="mihomori (All-in-One dashboard + mihomo supervisor)"
 
 : "${MIHOMO_BIN:=/usr/local/bin/mihomo}"
-: "${DATA_DIR:=/var/lib/metacubexd}"
-: "${METACUBEXD_USER:=metacubexd:metacubexd}"
+: "${DATA_DIR:=/var/lib/mihomori}"
+: "${MIHOMORI_USER:=mihomori:mihomori}"
 
-command="/usr/local/bin/metacubexd-server"
-command_user="${METACUBEXD_USER}"
+command="/usr/local/bin/mihomori"
+command_user="${MIHOMORI_USER}"
 command_background=true
 pidfile="/run/${RC_SVCNAME}.pid"
 output_log="/var/log/${RC_SVCNAME}/${RC_SVCNAME}.log"
@@ -315,10 +315,10 @@ depend() {
 }
 
 start_pre() {
-    checkpath -d -o "${METACUBEXD_USER}" -m 0755 /var/log/${RC_SVCNAME}
+    checkpath -d -o "${MIHOMORI_USER}" -m 0755 /var/log/${RC_SVCNAME}
     local _user _group
-    _user="${METACUBEXD_USER%%:*}"
-    _group="${METACUBEXD_USER##*:}"
+    _user="${MIHOMORI_USER%%:*}"
+    _group="${MIHOMORI_USER##*:}"
     [ "${_group}" = "${_user}" ] && _group="${_user}"
     checkpath -d -o "${_user}" -m 0755 "${DATA_DIR}"
     if [ -x "${MIHOMO_BIN}" ]; then
@@ -333,10 +333,10 @@ OPENRC_INIT
         info "Existing conf.d at /etc/conf.d/${SERVICE_NAME} — keeping."
     else
         cat > "/etc/conf.d/${SERVICE_NAME}" << 'OPENRC_CONF'
-# /etc/conf.d/metacubexd — OpenRC environment variables
-export METACUBEXD_USER="metacubexd:metacubexd"
+# /etc/conf.d/mihomori — OpenRC environment variables
+export MIHOMORI_USER="mihomori:mihomori"
 export MIHOMO_BIN="/usr/local/bin/mihomo"
-export DATA_DIR="/var/lib/metacubexd"
+export DATA_DIR="/var/lib/mihomori"
 export CONTROL_TOKEN=""
 export CLASH_SECRET=""
 # export CONTROL_PORT=8080
