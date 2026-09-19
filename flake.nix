@@ -12,7 +12,7 @@
     loadPrivateFlake =
       path:
       let
-        flakeHash = builtins.readFile "${toString path}.narHash";
+        flakeHash = nixpkgs.lib.removeSuffix "\n" (builtins.readFile "${toString path}.narHash");
         flakePath = "path:${toString path}?narHash=${flakeHash}";
       in
       builtins.getFlake (builtins.unsafeDiscardStringContext flakePath);
@@ -214,6 +214,9 @@
               ++ lib.optional (valid.services.mihomori ? tunMode)
                 "user-level module must not expose tunMode"
               ++ lib.optional (
+                builtins.length (lib.splitString "org.mihomori.mihomori.plist" valid.system.activationScripts.script.text) < 2
+              ) "activation script never mentions the mihomori launchd plist"
+              ++ lib.optional (
                 !(lib.hasInfix "mkdir -p ${lib.escapeShellArg darwinDataDir}" beforeAgentLoad)
               ) "activation script does not create dataDir before the agent is loaded"
               ++ mihomoriAssertionMessages valid
@@ -279,12 +282,15 @@
           type = "app";
           program = "${pkgs.writeShellScript "update-dev-private-narHash" ''
             set -euo pipefail
-            if [ ! -f flake.nix ]; then
-              echo "run this from the repository root" >&2
+            if [ ! -f flake.nix ] || [ ! -d dev/private ]; then
+              echo "run this from the repository root (dev/private must exist)" >&2
               exit 1
             fi
             nix --extra-experimental-features "nix-command flakes" flake lock ./dev/private
-            nix --extra-experimental-features "nix-command flakes" hash path ./dev/private | tr -d '\n' > ./dev/private.narHash
+            tmp=$(mktemp)
+            trap 'rm -f "$tmp"' EXIT
+            nix --extra-experimental-features "nix-command flakes" hash path ./dev/private | tr -d '\n' > "$tmp"
+            mv "$tmp" ./dev/private.narHash
             echo "dev/private.narHash updated: $(cat ./dev/private.narHash)"
           ''}";
         };

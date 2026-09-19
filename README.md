@@ -172,6 +172,8 @@ Differences from the NixOS module:
 | `dataDir` default | `/var/lib/mihomori` | `~/.local/state/mihomori` (Linux) / `~/Library/Application Support/mihomori` (Darwin) |
 | `tunMode` / `processesInfo` / `user` / `group` / `openFirewall` | available | **not available** — a user service cannot get `CAP_NET_ADMIN`, so TUN mode needs the NixOS module |
 
+All three modules pass `controlToken` / `clashSecret` / `githubToken` to the service as plain environment variables, so they end up in plain text in the Nix store — and, for the user-level modules, in the generated systemd unit or launchd plist. Treat them as readable by any local user and rotate them if the machine is shared.
+
 ### nix-darwin Module
 
 ```nix

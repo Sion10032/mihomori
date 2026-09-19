@@ -16,8 +16,9 @@
 }:
 
 let
-  # pkgs.mihomo has no x86_64-darwin build; fall back to null there so the
-  # assertion below can point at mihomoBin instead of an eval-time crash.
+  # Some platforms have no pkgs.mihomo build; fall back to null where it is
+  # unavailable so the assertion below can point at mihomoBin instead of an
+  # eval-time crash.
   mihomoDefault =
     if lib.meta.availableOn pkgs.stdenv.hostPlatform pkgs.mihomo then pkgs.mihomo else null;
 
@@ -31,9 +32,12 @@ let
       {
         assertion = cfg.mihomo != null || cfg.mihomoBin != null;
         message = ''
-          services.mihomori has no mihomo kernel: pkgs.mihomo is not available on
-          ${pkgs.stdenv.hostPlatform.system}. Set services.mihomori.mihomoBin to an
-          externally managed mihomo binary, or override services.mihomori.mihomo.
+          services.mihomori has no mihomo kernel configured${
+            lib.optionalString (
+              mihomoDefault == null
+            ) ": pkgs.mihomo is not available on ${pkgs.stdenv.hostPlatform.system}"
+          }. Set services.mihomori.mihomoBin to an externally managed mihomo
+          binary, or override services.mihomori.mihomo.
         '';
       }
     ];

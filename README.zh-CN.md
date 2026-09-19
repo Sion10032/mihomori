@@ -171,6 +171,8 @@ modules = [
 | `dataDir` 默认 | `/var/lib/mihomori` | Linux `~/.local/state/mihomori`；Darwin `~/Library/Application Support/mihomori` |
 | `tunMode` / `processesInfo` / `user` / `group` / `openFirewall` | 可用 | **不可用** —— 用户级服务拿不到 `CAP_NET_ADMIN`，TUN 模式请用 NixOS 模块 |
 
+三个模块都会把 `controlToken` / `clashSecret` / `githubToken` 作为普通环境变量传给服务，因此它们会以明文出现在 Nix store 中 —— 用户级模块还会出现在生成的 systemd unit 或 launchd plist 里。请把它们视为本机任意用户都可读取，并在共享机器上定期轮换。
+
 ### nix-darwin 模块
 
 ```nix

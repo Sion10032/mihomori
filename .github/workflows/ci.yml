@@ -27,6 +27,7 @@ jobs:
       - uses: cachix/install-nix-action@v30
       - name: verify dev/private narHash is up to date
         run: |
+          set -euo pipefail
           expected=$(cat dev/private.narHash)
           actual=$(nix hash path ./dev/private | tr -d '\n')
           if [ "$expected" != "$actual" ]; then
