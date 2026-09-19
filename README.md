@@ -138,6 +138,65 @@ Common options (full list in `nix/common.nix`):
 nix run github:Sion10032/mihomori -- --version   # run the binary standalone
 ```
 
+### Home Manager Module
+
+The repository ships a Home Manager module that runs as the logged-in user:
+`systemd --user` on Linux, a launchd agent on Darwin.
+
+```nix
+# flake.nix
+inputs.mihomori = {
+  url = "github:Sion10032/mihomori";
+};
+
+# home-manager configuration
+modules = [
+  inputs.mihomori.homeManagerModules.default
+  {
+    services.mihomori = {
+      enable = true;
+      controlToken = "<random string>";
+      clashSecret = "<random string>";
+    };
+  }
+];
+```
+
+Differences from the NixOS module:
+
+| | NixOS module | Home Manager module |
+| --- | --- | --- |
+| Runs as | system user `mihomori` | the logged-in user |
+| Linux | `systemd` service | `systemd --user` (needs `loginctl enable-linger <user>` to survive logout) |
+| Darwin | — | launchd agent in `~/Library/LaunchAgents` |
+| `dataDir` default | `/var/lib/mihomori` | `~/.local/state/mihomori` (Linux) / `~/Library/Application Support/mihomori` (Darwin) |
+| `tunMode` / `processesInfo` / `user` / `group` / `openFirewall` | available | **not available** — a user service cannot get `CAP_NET_ADMIN`, so TUN mode needs the NixOS module |
+
+### nix-darwin Module
+
+```nix
+# flake.nix
+inputs.mihomori = {
+  url = "github:Sion10032/mihomori";
+};
+
+# nix-darwin configuration
+modules = [
+  inputs.mihomori.darwinModules.default
+  {
+    services.mihomori = {
+      enable = true;
+      controlToken = "<random string>";
+      clashSecret = "<random string>";
+    };
+  }
+];
+```
+
+The service runs as `system.primaryUser` through a per-user launchd agent (`~/Library/LaunchAgents/org.mihomori.mihomori.plist`), and `dataDir` defaults to `~/Library/Application Support/mihomori`. All options from the NixOS module are available except the NixOS-only ones listed above; `tunMode` is also not provided (user agents cannot create utun devices). `system.primaryUser` must be set — nix-darwin installs the agent into that user's `~/Library/LaunchAgents` and refuses to evaluate without it.
+
+> Enabling both the Home Manager module and the nix-darwin module on the same machine yields two competing launchd agents — pick one. Both write the same `~/Library/LaunchAgents/org.mihomori.mihomori.plist`, so whichever is activated last silently replaces the other.
+
 ---
 
 ## ⚙️ Configuration

@@ -138,6 +138,64 @@ modules = [
 nix run github:Sion10032/mihomori -- --version   # 也可单独运行二进制
 ```
 
+### Home Manager 模块
+
+项目自带 Home Manager 模块，以登录用户身份运行服务：Linux 用 `systemd --user`，Darwin 用 launchd agent。
+
+```nix
+# flake.nix
+inputs.mihomori = {
+  url = "github:Sion10032/mihomori";
+};
+
+# home-manager 配置
+modules = [
+  inputs.mihomori.homeManagerModules.default
+  {
+    services.mihomori = {
+      enable = true;
+      controlToken = "<随机字符串>";
+      clashSecret = "<随机字符串>";
+    };
+  }
+];
+```
+
+与 NixOS 模块的差异：
+
+| | NixOS 模块 | Home Manager 模块 |
+| --- | --- | --- |
+| 运行身份 | 系统用户 `mihomori` | 登录用户 |
+| Linux | `systemd` 服务 | `systemd --user`（要常驻需 `loginctl enable-linger <用户>`） |
+| Darwin | — | `~/Library/LaunchAgents` 下的 launchd agent |
+| `dataDir` 默认 | `/var/lib/mihomori` | Linux `~/.local/state/mihomori`；Darwin `~/Library/Application Support/mihomori` |
+| `tunMode` / `processesInfo` / `user` / `group` / `openFirewall` | 可用 | **不可用** —— 用户级服务拿不到 `CAP_NET_ADMIN`，TUN 模式请用 NixOS 模块 |
+
+### nix-darwin 模块
+
+```nix
+# flake.nix
+inputs.mihomori = {
+  url = "github:Sion10032/mihomori";
+};
+
+# nix-darwin 配置
+modules = [
+  inputs.mihomori.darwinModules.default
+  {
+    services.mihomori = {
+      enable = true;
+      controlToken = "<随机字符串>";
+      clashSecret = "<随机字符串>";
+    };
+  }
+];
+```
+
+服务以 `system.primaryUser` 身份通过用户级 launchd agent 运行（`~/Library/LaunchAgents/org.mihomori.mihomori.plist`），`dataDir` 默认 `~/Library/Application Support/mihomori`。除上方列出的 NixOS 专属选项外，其余选项与 NixOS 模块一致；同样不提供 `tunMode`（用户级 agent 无法创建 utun 设备）。必须设置 `system.primaryUser` —— nix-darwin 会把 agent 装到该用户的 `~/Library/LaunchAgents`，未设置时会直接拒绝求值。
+
+> 同一台机器上同时启用 Home Manager 模块与 nix-darwin 模块会产生两个互相竞争的 launchd agent，请二选一。两者写入同一个 `~/Library/LaunchAgents/org.mihomori.mihomori.plist`，最后激活的一方会静默替换另一方。
+
 ---
 
 ## ⚙️ 配置
