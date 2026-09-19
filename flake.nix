@@ -115,6 +115,18 @@
               ];
             }).config;
 
+            hmDarwin = (privateInputs.home-manager.lib.homeManagerConfiguration {
+              pkgs = import nixpkgs { system = "aarch64-darwin"; };
+              modules = [
+                self.homeManagerModules.default
+                ./nix/check-home-manager.nix
+                { home.homeDirectory = lib.mkForce "/Users/mihomori-test"; }
+              ];
+            }).config;
+
+            agent = hmDarwin.launchd.agents.mihomori;
+            darwinDataDir = "/Users/mihomori-test/Library/Application Support/mihomori";
+
             unit = hmLinux.systemd.user.services.mihomori;
             service = hmLinux.services.mihomori;
 
@@ -130,6 +142,23 @@
                 "unexpected home-manager dataDir default: ${service.dataDir}"
               ++ lib.optional (hmLinux.services.mihomori ? tunMode)
                 "user-level module must not expose tunMode"
+              ++ lib.optional (!agent.enable) "launchd agent is not enabled"
+              ++ lib.optional (agent.domain != "gui") "launchd agent domain should be gui"
+              ++ lib.optional (agent.config.Label != "org.mihomori.mihomori")
+                "unexpected launchd Label: ${agent.config.Label}"
+              ++ lib.optional (agent.config.EnvironmentVariables.CONTROL_TOKEN != "test-token")
+                "CONTROL_TOKEN missing from the launchd EnvironmentVariables"
+              ++ lib.optional (agent.config.EnvironmentVariables.DATA_DIR != darwinDataDir)
+                "unexpected darwin DATA_DIR: ${agent.config.EnvironmentVariables.DATA_DIR}"
+              ++ lib.optional (agent.config.RunAtLoad != true) "RunAtLoad is not set"
+              ++ lib.optional (agent.config.KeepAlive.SuccessfulExit != false)
+                "KeepAlive.SuccessfulExit should be false"
+              ++ lib.optional (agent.config.WorkingDirectory != darwinDataDir)
+                "launchd WorkingDirectory should default to dataDir"
+              ++ lib.optional (hmDarwin.systemd.user.services ? mihomori)
+                "darwin must not generate a systemd unit"
+              ++ lib.optional (hmDarwin.services.mihomori.dataDir != darwinDataDir)
+                "unexpected home-manager darwin dataDir default: ${hmDarwin.services.mihomori.dataDir}"
               ++ lib.optional (!(hmLinux.home.activation ? mihomoriDataDir))
                 "home.activation.mihomoriDataDir is missing (dataDir would not be created)"
               ++ mihomoriAssertionMessages hmLinux
