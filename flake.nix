@@ -6,6 +6,19 @@
   };
 
   outputs = { self, nixpkgs }: let
+    # dev-only inputs: home-manager / nix-darwin live in dev/private so they
+    # never enter this flake's lock file. Nix is lazy, so the private flake is
+    # only fetched when `checks` is evaluated.
+    loadPrivateFlake =
+      path:
+      let
+        flakeHash = builtins.readFile "${toString path}.narHash";
+        flakePath = "path:${toString path}?narHash=${flakeHash}";
+      in
+      builtins.getFlake (builtins.unsafeDiscardStringContext flakePath);
+
+    privateInputs = (loadPrivateFlake ./dev/private).inputs;
+
     systems = [
       "x86_64-linux"
       "aarch64-linux"
@@ -64,7 +77,25 @@
           builtins.filter (lib.hasInfix "mihomori") (
             map (a: a.message) (builtins.filter (a: !a.assertion) config.assertions)
           );
+
+        privateInputsProblems =
+          lib.optional (!(privateInputs ? home-manager)) "dev/private must declare a home-manager input"
+          ++ lib.optional (
+            (privateInputs ? home-manager) && !((privateInputs.home-manager.lib or { }) ? homeManagerConfiguration)
+          ) "home-manager input has no lib.homeManagerConfiguration"
+          ++ lib.optional (!(privateInputs ? nix-darwin)) "dev/private must declare a nix-darwin input"
+          ++ lib.optional (
+            (privateInputs ? nix-darwin) && !((privateInputs.nix-darwin.lib or { }) ? darwinSystem)
+          ) "nix-darwin input has no lib.darwinSystem";
       in {
+        private-inputs-available =
+          if privateInputsProblems != [ ] then
+            throw "dev/private is missing required inputs: ${lib.concatStringsSep "; " privateInputsProblems}"
+          else
+            pkgs.runCommand "mihomori-private-inputs-available" { } ''
+              touch "$out"
+            '';
+
         nixos-module-eval =
           let
             valid = nixosConfig [ ./nix/check-nixos.nix ];
@@ -103,5 +134,25 @@
     );
 
     nixosModules.default = import ./nix/module-nixos.nix { inherit self; };
+
+    apps = forAllSystems (
+      system: let
+        pkgs = import nixpkgs { inherit system; };
+      in {
+        update-dev-private-narHash = {
+          type = "app";
+          program = "${pkgs.writeShellScript "update-dev-private-narHash" ''
+            set -euo pipefail
+            if [ ! -f flake.nix ]; then
+              echo "run this from the repository root" >&2
+              exit 1
+            fi
+            nix --extra-experimental-features "nix-command flakes" flake lock ./dev/private
+            nix --extra-experimental-features "nix-command flakes" hash path ./dev/private | tr -d '\n' > ./dev/private.narHash
+            echo "dev/private.narHash updated: $(cat ./dev/private.narHash)"
+          ''}";
+        };
+      }
+    );
   };
 }

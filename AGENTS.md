@@ -20,8 +20,11 @@ go build ./...                     # 全部编译（server + tui）
 go build ./cmd/mihomori   # 仅服务端（CI 用：go build -trimpath ./cmd/mihomori）
 go vet ./...                       # CI 静态检查
 go test ./...                      # 全部测试（supervisor 测试会现场编译 testdata/fake-mihomo）
+nix flake check                    # NixOS / Home Manager / nix-darwin 模块 eval 检查
+nix run .#update-dev-private-narHash  # 改动 dev/private 后刷新 narHash（必须，在仓库根目录运行）
 ```
 
+- `home-manager` / `nix-darwin` 只存在于 dev-only 的 `dev/private` 子 flake 中，主 `flake.lock` 始终只有 `nixpkgs`；改动 `dev/private/` 后必须运行 `nix run .#update-dev-private-narHash`，否则 CI 会因 narHash 不一致失败。
 - 开发环境用 direnv + Nix flake（`.envrc` 自动加载）；`GOPROXY` 指向 goproxy.cn，`GOPATH` 指向本地 `.go/`。
 - 没有独立的 lint 脚本，CI 只有 `go vet ./...`；格式化用 `go fmt`。
 
