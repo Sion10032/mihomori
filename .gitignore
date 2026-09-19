@@ -41,3 +41,4 @@ result
 /data
 /internal/server/static/web/*
 !/internal/server/static/web/.gitkeep
+/refs
