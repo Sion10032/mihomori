@@ -1,14 +1,14 @@
-# Shared option definitions and env mapping for the NixOS module
+# Shared option definitions and env mapping for the mihomori modules
 # (services.mihomori.*).
 #
 # Import as: common = import ./common.nix { inherit self lib pkgs; }
 #
 # Exposes:
-#   options          — function { lib, pkgs, config } → attrset of option
-#                      declarations for services.mihomori
+#   options          — function { lib, pkgs, config, dataDirDefault } → attrset of
+#                      option declarations for services.mihomori
 #   env              — cfg → attrs of environment variables understood by the
 #                      server (internal/server/config/config.go)
-#   assertions       — cfg → NixOS-style assertion attrsets
+#   assertions       — cfg → module-system-style assertion attrsets
 {
   self,
   lib,
@@ -16,6 +16,11 @@
 }:
 
 let
+  # pkgs.mihomo has no x86_64-darwin build; fall back to null there so the
+  # assertion below can point at mihomoBin instead of an eval-time crash.
+  mihomoDefault =
+    if lib.meta.availableOn pkgs.stdenv.hostPlatform pkgs.mihomo then pkgs.mihomo else null;
+
   assertionList =
     cfg:
     [
@@ -23,17 +28,24 @@ let
         assertion = cfg.mihomo == null || cfg.mihomoBin == null;
         message = "services.mihomori.mihomo and services.mihomori.mihomoBin are mutually exclusive.";
       }
+      {
+        assertion = cfg.mihomo != null || cfg.mihomoBin != null;
+        message = ''
+          services.mihomori has no mihomo kernel: pkgs.mihomo is not available on
+          ${pkgs.stdenv.hostPlatform.system}. Set services.mihomori.mihomoBin to an
+          externally managed mihomo binary, or override services.mihomori.mihomo.
+        '';
+      }
     ];
 in
 {
-  options = { lib, pkgs, config }: with lib; {
+  options = { lib, pkgs, config, dataDirDefault ? "/var/lib/mihomori" }: with lib; {
     enable = mkOption {
       type = types.bool;
       default = false;
       description = ''
         Whether to enable the mihomori service (dashboard UI +
-        mihomo supervisor). Enabling also installs the binary into
-        environment.systemPackages.
+        mihomo supervisor).
       '';
     };
 
@@ -98,7 +110,7 @@ in
 
     dataDir = mkOption {
       type = types.str;
-      default = "/var/lib/mihomori";
+      default = dataDirDefault;
       description = ''
         Directory for profiles/, active.yaml, geo caches (DATA_DIR).
         `/var/lib/<name>` paths are managed via StateDirectory.
@@ -107,8 +119,8 @@ in
 
     mihomo = mkOption {
       type = types.nullOr types.package;
-      default = pkgs.mihomo;
-      defaultText = literalExpression "pkgs.mihomo";
+      default = mihomoDefault;
+      defaultText = literalMD "`pkgs.mihomo`, or `null` where it is unavailable";
       description = ''
         mihomo kernel package supervised by the server (MIHOMO_BIN).
         Set to null and use `mihomoBin` to point at an external binary.

@@ -34,7 +34,10 @@ let
   CapabilityBoundingSet = AmbientCapabilities;
 in
 {
-  options.services.mihomori = common.options { inherit lib pkgs config; } // {
+  options.services.mihomori = common.options {
+    inherit lib pkgs config;
+    dataDirDefault = "/var/lib/mihomori";
+  } // {
     user = lib.mkOption {
       type = lib.types.str;
       default = "mihomori";
