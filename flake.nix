@@ -87,7 +87,8 @@
           ++ lib.optional (
             (privateInputs ? nix-darwin) && !((privateInputs.nix-darwin.lib or { }) ? darwinSystem)
           ) "nix-darwin input has no lib.darwinSystem";
-      in {
+      in
+      {
         private-inputs-available =
           if privateInputsProblems != [ ] then
             throw "dev/private is missing required inputs: ${lib.concatStringsSep "; " privateInputsProblems}"
@@ -96,6 +97,56 @@
               touch "$out"
             '';
 
+        home-manager-module-eval =
+          let
+            hmLinux = (privateInputs.home-manager.lib.homeManagerConfiguration {
+              pkgs = import nixpkgs { system = "x86_64-linux"; };
+              modules = [
+                self.homeManagerModules.default
+                ./nix/check-home-manager.nix
+              ];
+            }).config;
+
+            hmInvalid = (privateInputs.home-manager.lib.homeManagerConfiguration {
+              pkgs = import nixpkgs { system = "x86_64-linux"; };
+              modules = [
+                self.homeManagerModules.default
+                ./nix/check-home-manager-invalid.nix
+              ];
+            }).config;
+
+            unit = hmLinux.systemd.user.services.mihomori;
+            service = hmLinux.services.mihomori;
+
+            hmInvalidRejected =
+              !(builtins.tryEval (builtins.deepSeq (mihomoriAssertionMessages hmInvalid) true)).success;
+
+            problems =
+              lib.optional (!(unit.Install.WantedBy == [ "default.target" ]))
+                "systemd unit is not wanted by default.target"
+              ++ lib.optional (!(lib.elem "CONTROL_TOKEN=test-token" unit.Service.Environment))
+                "CONTROL_TOKEN missing from the generated systemd unit"
+              ++ lib.optional (service.dataDir != "/home/mihomori-test/.local/state/mihomori")
+                "unexpected home-manager dataDir default: ${service.dataDir}"
+              ++ lib.optional (hmLinux.services.mihomori ? tunMode)
+                "user-level module must not expose tunMode"
+              ++ lib.optional (!(hmLinux.home.activation ? mihomoriDataDir))
+                "home.activation.mihomoriDataDir is missing (dataDir would not be created)"
+              ++ mihomoriAssertionMessages hmLinux
+              # home-manager's `config` throws outright once an assertion fails
+              # (unlike NixOS, whose `config.assertions` stays readable), so a
+              # rejected config is only observable as a failed evaluation.
+              ++ lib.optional (!hmInvalidRejected)
+                "mihomo/mihomoBin mutual exclusion was not rejected by the home-manager module";
+          in
+          if problems != [ ] then
+            throw "home-manager module check failed: ${lib.concatStringsSep "; " problems}"
+          else
+            pkgs.runCommand "mihomori-home-manager-module-eval" { } ''
+              touch "$out"
+            '';
+      }
+      // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         nixos-module-eval =
           let
             valid = nixosConfig [ ./nix/check-nixos.nix ];
@@ -134,6 +185,9 @@
     );
 
     nixosModules.default = import ./nix/module-nixos.nix { inherit self; };
+    homeManagerModules.default = import ./nix/module-home-manager.nix { inherit self; };
+    homeManagerModule = self.homeManagerModules.default;
+    homeModules = self.homeManagerModules;
 
     apps = forAllSystems (
       system: let
