@@ -174,6 +174,58 @@
             pkgs.runCommand "mihomori-home-manager-module-eval" { } ''
               touch "$out"
             '';
+
+        darwin-module-eval =
+          let
+            evalDarwin =
+              hostPlatform: modules:
+              (privateInputs.nix-darwin.lib.darwinSystem {
+                modules = [
+                  self.darwinModules.default
+                ] ++ modules ++ [ { nixpkgs.hostPlatform = hostPlatform; } ];
+              }).config;
+
+            valid = evalDarwin "aarch64-darwin" [ ./nix/check-darwin.nix ];
+            invalid = evalDarwin "aarch64-darwin" [ ./nix/check-darwin-invalid.nix ];
+
+            agent = valid.launchd.user.agents.mihomori.serviceConfig;
+            darwinDataDir = "/Users/mihomori-test/Library/Application Support/mihomori";
+
+            # The assembled activate script, truncated at the first mention of our
+            # plist — i.e. everything that runs before `launchctl load -w
+            # …/org.mihomori.mihomori.plist`. `extraActivation` must land in here.
+            beforeAgentLoad =
+              builtins.head (
+                lib.splitString "org.mihomori.mihomori.plist" valid.system.activationScripts.script.text
+              );
+
+            problems =
+              lib.optional (agent.Label != "org.mihomori.mihomori")
+                "unexpected launchd Label: ${agent.Label}"
+              ++ lib.optional (agent.EnvironmentVariables.CONTROL_TOKEN != "test-token")
+                "CONTROL_TOKEN missing from the launchd job"
+              ++ lib.optional (agent.EnvironmentVariables.DATA_DIR != darwinDataDir)
+                "unexpected DATA_DIR: ${agent.EnvironmentVariables.DATA_DIR}"
+              ++ lib.optional (agent.RunAtLoad != true) "RunAtLoad is not set"
+              ++ lib.optional (agent.WorkingDirectory != darwinDataDir)
+                "WorkingDirectory should default to dataDir"
+              ++ lib.optional (valid.services.mihomori.dataDir != darwinDataDir)
+                "unexpected nix-darwin dataDir default: ${valid.services.mihomori.dataDir}"
+              ++ lib.optional (valid.services.mihomori ? tunMode)
+                "user-level module must not expose tunMode"
+              ++ lib.optional (
+                !(lib.hasInfix "mkdir -p ${lib.escapeShellArg darwinDataDir}" beforeAgentLoad)
+              ) "activation script does not create dataDir before the agent is loaded"
+              ++ mihomoriAssertionMessages valid
+              ++ lib.optional (mihomoriAssertionMessages invalid == [ ])
+                "darwin must report that no mihomo kernel is configured";
+          in
+          if problems != [ ] then
+            throw "nix-darwin module check failed: ${lib.concatStringsSep "; " problems}"
+          else
+            pkgs.runCommand "mihomori-darwin-module-eval" { } ''
+              touch "$out"
+            '';
       }
       // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         nixos-module-eval =
@@ -217,6 +269,7 @@
     homeManagerModules.default = import ./nix/module-home-manager.nix { inherit self; };
     homeManagerModule = self.homeManagerModules.default;
     homeModules = self.homeManagerModules;
+    darwinModules.default = import ./nix/module-darwin.nix { inherit self; };
 
     apps = forAllSystems (
       system: let
