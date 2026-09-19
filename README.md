@@ -1,4 +1,4 @@
-# metacubexd-server-go
+# mihomori
 
 > A Go rewrite of metacubexd-server, replacing the upstream Node.js implementation with added Clash API same-origin proxy. The browser only needs a single port for all management operations — no need to expose the mihomo control port separately. Suitable for self-hosting / NAS / VPS.
 
@@ -16,20 +16,20 @@
 
 ## 🚀 Quick Start
 
-The image `sion10032/metacubexd-server:latest` is published on Docker Hub — pull directly, no need to clone the source.
+The image `sion10032/mihomori:latest` is published on Docker Hub — pull directly, no need to clone the source.
 
 ### docker
 
 ```bash
 docker run -d \
-  --name metacubexd-server \
+  --name mihomori \
   --restart unless-stopped \
   -p 8080:8080 \
   -p 7890:7890 \
   -v "./data:/data" \
   -e CONTROL_TOKEN="<your-password>" \
   -e TZ=Asia/Shanghai \
-  sion10032/metacubexd-server:latest
+  sion10032/mihomori:latest
 ```
 
 ### docker compose
@@ -37,8 +37,8 @@ docker run -d \
 ```yaml
 services:
   server:
-    image: sion10032/metacubexd-server:latest
-    container_name: metacubexd-server
+    image: sion10032/mihomori:latest
+    container_name: mihomori
     restart: unless-stopped
     ports:
       - "8080:8080" # dashboard + control/clash API
@@ -63,7 +63,7 @@ Open [http://localhost:8080](http://localhost:8080) in your browser → enter th
 No Docker required — download the static binary, prepare the mihomo kernel and UI resources:
 
 ```bash
-./metacubexd-server
+./mihomori
 ```
 
 Required environment variables are listed in the [Configuration](#️-configuration) section below.
@@ -74,27 +74,69 @@ Deploy the binary as a system service (requires root or sudo):
 
 ```bash
 # One-click install (auto-detects systemd / OpenRC, generates random secrets, enables and starts the service)
-curl -fsSL https://raw.githubusercontent.com/Sion10032/metacubexd-server-go/main/deploy/metacubexd-ctl.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Sion10032/mihomori/main/deploy/mihomori-ctl.sh | sudo bash
 ```
 
 Manual installation (from release tarball):
 
 ```bash
-tar xzf metacubexd-server-go_*.tar.gz
-cd metacubexd-server-go_*/
-sudo bash deploy/metacubexd-ctl.sh install
+tar xzf mihomori_*.tar.gz
+cd mihomori_*/
+sudo bash deploy/mihomori-ctl.sh install
 
 # Or with a local binary:
-sudo bash deploy/metacubexd-ctl.sh install --bin ./metacubexd-server-go
+sudo bash deploy/mihomori-ctl.sh install --bin ./mihomori
 
 # Other commands:
-# bash deploy/metacubexd-ctl.sh config show          # view config
-# bash deploy/metacubexd-ctl.sh config set KEY=VAL   # change config
-# bash deploy/metacubexd-ctl.sh update               # upgrade
-# bash deploy/metacubexd-ctl.sh uninstall            # remove
+# bash deploy/mihomori-ctl.sh config show          # view config
+# bash deploy/mihomori-ctl.sh config set KEY=VAL   # change config
+# bash deploy/mihomori-ctl.sh update               # upgrade
+# bash deploy/mihomori-ctl.sh uninstall            # remove
 ```
 
 > **mihomo kernel**: The service does not include mihomo; install it at `/usr/local/bin/mihomo` (or set `MIHOMO_BIN` in the env file to the actual path). TUN mode requires `CAP_NET_ADMIN` capability (the systemd unit already has `AmbientCapabilities` configured; OpenRC's `start_pre` runs `setcap` on mihomo).
+
+### NixOS Module
+
+The repository ships a NixOS module. Enable the service through `services.mihomori.*` — the default package embeds the dashboard UI and mihomo comes from nixpkgs automatically:
+
+```nix
+# flake.nix
+inputs.mihomori = {
+  url = "github:Sion10032/mihomori";
+};
+
+# NixOS configuration
+modules = [
+  inputs.mihomori.nixosModules.default
+  {
+    services.mihomori = {
+      enable = true;
+      controlToken = "<random string>";   # Bearer token for /api/control/**
+      clashSecret = "<random string>";    # mihomo external-controller secret
+      openFirewall = true;                 # open controlPort/mixedPort
+    };
+  }
+];
+```
+
+Common options (full list in `nix/common.nix`):
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `package` | picked by `webui.enable` | Installing the service also adds the binary to `environment.systemPackages` |
+| `webui.enable` | `true` | Whether the default package embeds the dashboard UI (`mihomori-minimal` is the stub build) |
+| `controlPort` / `clashApiPort` / `mixedPort` | `8080` / `9090` / `0` | Ports, see [Ports](#-ports) above |
+| `dataDir` | `/var/lib/mihomori` | Data directory (`StateDirectory` configured automatically) |
+| `mihomo` / `mihomoBin` | `pkgs.mihomo` / `null` | Kernel source, mutually exclusive; `mihomoBin` points at an external binary |
+| `tunMode` / `processesInfo` | `false` / `false` | Grant `CAP_NET_ADMIN` for TUN mode; grant `CAP_DAC_READ_SEARCH` + `CAP_SYS_PTRACE` for `process-name`-style rules (no capabilities by default) |
+| `uiDist` | `null` | Runtime UI directory (`UI_DIST`), overrides the embedded UI |
+| `controlToken` / `clashSecret` / `githubToken` | `null` | Map to the same-named env vars |
+| `user` / `group` / `openFirewall` | `mihomori` / `mihomori` / `false` | Service user/group and firewall |
+
+```bash
+nix run github:Sion10032/mihomori -- --version   # run the binary standalone
+```
 
 ---
 

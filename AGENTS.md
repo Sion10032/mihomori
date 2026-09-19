@@ -11,13 +11,13 @@
 - 遵循项目现有代码风格和配置。
 - 优先进行最小化修改，避免无关重构。
 - 注意 `internal/server/`、`internal/api/`、`internal/tui/` 的跨包依赖方向：`api` 只放共享 wire 类型，`server` 与 `tui` 通过它通信，避免循环依赖。
-- TUI 开发时参考根目录的 `TUI_PLAN.md`、`tui_plan_1.md`、`tui_plan_2.md`；`TUI_DEFERRED.md`、`todo.md` 记录延后事项。
+- TUI 开发时参考 `plans/` 目录的 `TUI_PLAN.md`、`tui_plan_1.md`、`tui_plan_2.md`、`tui_plan_3.md`；`TUI_DEFERRED.md`、`todo.md` 记录延后事项。
 
 ## 常用命令
 
 ```bash
 go build ./...                     # 全部编译（server + tui）
-go build ./cmd/metacubexd-server   # 仅服务端（CI 用：go build -trimpath ./cmd/metacubexd-server）
+go build ./cmd/mihomori   # 仅服务端（CI 用：go build -trimpath ./cmd/mihomori）
 go vet ./...                       # CI 静态检查
 go test ./...                      # 全部测试（supervisor 测试会现场编译 testdata/fake-mihomo）
 ```
@@ -63,8 +63,8 @@ git diff --cached
 ## 项目结构
 
 ```
-cmd/metacubexd-server/   # 服务端入口（配置来自环境变量，见 README § 配置）
-cmd/mihomo-tui/          # 交互式 TUI 客户端（连接运行中的 server）
+cmd/mihomori/              # 服务端入口（配置来自环境变量，见 README § 配置）
+cmd/mihomori-tui/          # 交互式 TUI 客户端（连接运行中的 server）
 internal/
   api/                   # 共享 wire 类型（server 与 tui 共用）
   server/                # 服务端

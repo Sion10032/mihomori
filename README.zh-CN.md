@@ -1,4 +1,4 @@
-# metacubexd-server-go
+# mihomori
 
 **中文** | [**English**](README.md)
 
@@ -16,20 +16,20 @@
 
 ## 🚀 快速开始
 
-镜像 `sion10032/metacubexd-server:latest` 已发布到 Docker Hub，直接拉取即可，无需 clone 源码。
+镜像 `sion10032/mihomori:latest` 已发布到 Docker Hub，直接拉取即可，无需 clone 源码。
 
 ### docker
 
 ```bash
 docker run -d \
-  --name metacubexd-server \
+  --name mihomori \
   --restart unless-stopped \
   -p 8080:8080 \
   -p 7890:7890 \
   -v "./data:/data" \
   -e CONTROL_TOKEN="<your-password>" \
   -e TZ=Asia/Shanghai \
-  sion10032/metacubexd-server:latest
+  sion10032/mihomori:latest
 ```
 
 ### docker compose
@@ -37,8 +37,8 @@ docker run -d \
 ```yaml
 services:
   server:
-    image: sion10032/metacubexd-server:latest
-    container_name: metacubexd-server
+    image: sion10032/mihomori:latest
+    container_name: mihomori
     restart: unless-stopped
     ports:
       - "8080:8080" # dashboard + control/clash API
@@ -63,7 +63,7 @@ services:
 无需 Docker，下载静态二进制 + 准备 mihomo 内核和 UI 资源：
 
 ```bash
-./metacubexd-server
+./mihomori
 ```
 
 所需环境变量见下方 [配置](#️-配置) 章节。
@@ -74,27 +74,69 @@ services:
 
 ```bash
 # 一键安装（自动检测 systemd / OpenRC，生成随机密钥，启用并启动服务）
-curl -fsSL https://raw.githubusercontent.com/Sion10032/metacubexd-server-go/main/deploy/metacubexd-ctl.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Sion10032/mihomori/main/deploy/mihomori-ctl.sh | sudo bash
 ```
 
 手动安装（从 release tarball）：
 
 ```bash
-tar xzf metacubexd-server-go_*.tar.gz
-cd metacubexd-server-go_*/
-sudo bash deploy/metacubexd-ctl.sh install
+tar xzf mihomori_*.tar.gz
+cd mihomori_*/
+sudo bash deploy/mihomori-ctl.sh install
 
 # 或使用本地二进制：
-sudo bash deploy/metacubexd-ctl.sh install --bin ./metacubexd-server-go
+sudo bash deploy/mihomori-ctl.sh install --bin ./mihomori
 
 # 其他命令：
-# bash deploy/metacubexd-ctl.sh config show          # 查看配置
-# bash deploy/metacubexd-ctl.sh config set KEY=VAL   # 修改配置
-# bash deploy/metacubexd-ctl.sh update               # 升级
-# bash deploy/metacubexd-ctl.sh uninstall            # 卸载
+# bash deploy/mihomori-ctl.sh config show          # 查看配置
+# bash deploy/mihomori-ctl.sh config set KEY=VAL   # 修改配置
+# bash deploy/mihomori-ctl.sh update               # 升级
+# bash deploy/mihomori-ctl.sh uninstall            # 卸载
 ```
 
 > **mihomo 内核**：服务不包含 mihomo，需自行安装到 `/usr/local/bin/mihomo`（或在 env 中设置 `MIHOMO_BIN` 指向实际路径）。TUN 模式需要 `CAP_NET_ADMIN` 权限（systemd unit 已配置 `AmbientCapabilities`；OpenRC 的 `start_pre` 会对 mihomo 执行 `setcap`）。
+
+### NixOS 模块
+
+项目自带 NixOS 模块，通过 `services.mihomori.*` 选项启用服务，默认内嵌仪表盘 UI 并自动管理 nixpkgs 中的 mihomo 内核：
+
+```nix
+# flake.nix
+inputs.mihomori = {
+  url = "github:Sion10032/mihomori";
+};
+
+# NixOS 配置
+modules = [
+  inputs.mihomori.nixosModules.default
+  {
+    services.mihomori = {
+      enable = true;
+      controlToken = "<随机长字符串>";   # /api/control/** 的 Bearer token
+      clashSecret = "<随机长字符串>";    # mihomo external-controller secret
+      openFirewall = true;               # 放行 controlPort/mixedPort
+    };
+  }
+];
+```
+
+常用选项（完整列表见模块源码 `nix/common.nix`）：
+
+| 选项 | 默认 | 说明 |
+| --- | --- | --- |
+| `package` | 按 `webui.enable` 自动选择 | 启用服务时同时把二进制装进 `environment.systemPackages` |
+| `webui.enable` | `true` | 默认 package 是否内嵌仪表盘 UI（`mihomori-minimal` 为无 UI 构建） |
+| `controlPort` / `clashApiPort` / `mixedPort` | `8080` / `9090` / `0` | 端口，见上方[端口](#-端口)章节 |
+| `dataDir` | `/var/lib/mihomori` | 数据目录（自动配置 `StateDirectory`） |
+| `mihomo` / `mihomoBin` | `pkgs.mihomo` / `null` | 内核来源，两者互斥；`mihomoBin` 指向外部二进制 |
+| `tunMode` / `processesInfo` | `false` / `false` | TUN 模式授予 `CAP_NET_ADMIN`；`process-name` 等进程规则授予 `CAP_DAC_READ_SEARCH`、`CAP_SYS_PTRACE`（默认不授予任何能力） |
+| `uiDist` | `null` | 运行时 UI 目录（`UI_DIST`），覆盖内嵌 UI |
+| `controlToken` / `clashSecret` / `githubToken` | `null` | 对应同名环境变量 |
+| `user` / `group` / `openFirewall` | `mihomori` / `mihomori` / `false` | 服务用户/组与防火墙 |
+
+```bash
+nix run github:Sion10032/mihomori -- --version   # 也可单独运行二进制
+```
 
 ---
 
