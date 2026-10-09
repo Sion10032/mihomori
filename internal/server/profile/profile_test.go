@@ -1,12 +1,15 @@
 package profile
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"mihomori/internal/api"
 )
 
 // testStore creates a Store in a temp dir with deterministic ID generation.
@@ -472,5 +475,162 @@ func TestSettingsOverlayLockedCreatesOnce(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("settings overlays = %d, want 1", count)
+	}
+}
+
+// stubFetcher is a mutable offline subscription source for Refresh tests.
+type stubFetcher struct{ body string }
+
+func (f *stubFetcher) Fetch(ctx context.Context, url, userAgent string) (string, *api.SubscriptionInfo, error) {
+	return f.body, nil, nil
+}
+
+// testStoreWithFetcher is testStore plus a stub subscription fetcher, so
+// ImportFromURL/Refresh can run offline.
+func testStoreWithFetcher(t *testing.T, body string) (*Store, *stubFetcher, string) {
+	t.Helper()
+	s, dir := testStore(t)
+	f := &stubFetcher{body: body}
+	s.fetcher = f
+	return s, f, dir
+}
+
+const subV1 = "mixed-port: 7890\ntun:\n  enable: false\n  auto-route: true\n"
+const subV2 = "mixed-port: 7890\nsocks-port: 7891\ntun:\n  enable: false\n  auto-route: true\n"
+
+func TestApplySettingsSectionWritesOverlayNotBase(t *testing.T) {
+	s, dir := testStore(t)
+	base, _ := s.Create(CreateInput{Name: "base", Content: "mixed-port: 7890\n"})
+	if err := s.SetActive(base.ID); err != nil {
+		t.Fatalf("SetActive: %v", err)
+	}
+	if err := s.ApplySettingsSection("mixed-port", 7897); err != nil {
+		t.Fatalf("ApplySettingsSection: %v", err)
+	}
+	// The base profile file must stay byte-for-byte untouched (the whole bug).
+	got, _ := s.Read(base.ID)
+	if got != "mixed-port: 7890\n" {
+		t.Errorf("base content = %q, want unchanged", got)
+	}
+	active, err := os.ReadFile(filepath.Join(dir, "active.yaml"))
+	if err != nil {
+		t.Fatalf("read active.yaml: %v", err)
+	}
+	top, _ := parseTopMap(string(active))
+	if top["mixed-port"] != 7897 {
+		t.Errorf("active mixed-port = %v, want 7897", top["mixed-port"])
+	}
+}
+
+func TestApplySettingsSectionSurvivesRefresh(t *testing.T) {
+	s, f, dir := testStoreWithFetcher(t, subV1)
+	sub, err := s.ImportFromURL("http://sub.example/x", "sub")
+	if err != nil {
+		t.Fatalf("ImportFromURL: %v", err)
+	}
+	if err := s.SetActive(sub.ID); err != nil {
+		t.Fatalf("SetActive: %v", err)
+	}
+	if err := s.ApplySettingsSection("mixed-port", 7897); err != nil {
+		t.Fatalf("apply mixed-port: %v", err)
+	}
+	if err := s.ApplySettingsSection("tun", map[string]any{"enable": true}); err != nil {
+		t.Fatalf("apply tun: %v", err)
+	}
+
+	f.body = subV2 // subscription updated: same keys, new values
+	if _, err := s.Refresh(sub.ID); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if err := s.SetActive(sub.ID); err != nil {
+		t.Fatalf("SetActive after refresh: %v", err)
+	}
+
+	active, _ := os.ReadFile(filepath.Join(dir, "active.yaml"))
+	top, _ := parseTopMap(string(active))
+	if top["mixed-port"] != 7897 {
+		t.Errorf("mixed-port after refresh = %v, want 7897", top["mixed-port"])
+	}
+	if top["socks-port"] != 7891 {
+		t.Errorf("socks-port after refresh = %v, want 7891 (from new subscription)", top["socks-port"])
+	}
+	tun, _ := top["tun"].(map[string]any)
+	if tun["enable"] != true {
+		t.Errorf("tun.enable = %v, want true (dashboard setting wins)", tun["enable"])
+	}
+	if tun["auto-route"] != true {
+		t.Errorf("tun.auto-route = %v, want true (subscription subkey kept)", tun["auto-route"])
+	}
+}
+
+func TestApplySettingsSectionSurvivesProfileSwitch(t *testing.T) {
+	s, dir := testStore(t)
+	a, _ := s.Create(CreateInput{Name: "a", Content: "mixed-port: 7890\n"})
+	b, _ := s.Create(CreateInput{Name: "b", Content: "port: 7891\n"})
+	s.SetActive(a.ID)
+	if err := s.ApplySettingsSection("mixed-port", 7897); err != nil {
+		t.Fatalf("ApplySettingsSection: %v", err)
+	}
+	if err := s.SetActive(b.ID); err != nil {
+		t.Fatalf("switch to b: %v", err)
+	}
+	active, _ := os.ReadFile(filepath.Join(dir, "active.yaml"))
+	top, _ := parseTopMap(string(active))
+	if top["mixed-port"] != 7897 {
+		t.Errorf("mixed-port after switch = %v, want 7897", top["mixed-port"])
+	}
+}
+
+func TestApplySettingsSectionWithoutActiveProfile(t *testing.T) {
+	s, dir := testStore(t)
+	if err := s.ApplySettingsSection("mixed-port", 7897); err != nil {
+		t.Fatalf("ApplySettingsSection with no active profile: %v", err)
+	}
+	base, _ := s.Create(CreateInput{Name: "base", Content: "mixed-port: 7890\n"})
+	if err := s.SetActive(base.ID); err != nil {
+		t.Fatalf("SetActive: %v", err)
+	}
+	active, _ := os.ReadFile(filepath.Join(dir, "active.yaml"))
+	top, _ := parseTopMap(string(active))
+	if top["mixed-port"] != 7897 {
+		t.Errorf("mixed-port = %v, want 7897 once a base is activated", top["mixed-port"])
+	}
+}
+
+func TestApplySettingsSectionSelfHealsBrokenOverlay(t *testing.T) {
+	s, dir := testStore(t)
+	m, _ := s.Create(CreateInput{Name: SettingsOverlayName, Type: TypeMerge, ManagedBy: ManagedBySettings})
+	writeProfile(t, dir, m.ID, "a: 1\na: 2\n") // duplicate key: unparseable
+
+	if err := s.ApplySettingsSection("mixed-port", 7897); err != nil {
+		t.Fatalf("ApplySettingsSection on broken overlay: %v", err)
+	}
+	raw, _ := s.Read(m.ID)
+	top, err := parseTopMap(raw)
+	if err != nil {
+		t.Fatalf("overlay still unparseable: %v", err)
+	}
+	if top["mixed-port"] != 7897 || len(top) != 1 {
+		t.Errorf("overlay = %v, want only mixed-port: 7897", top)
+	}
+}
+
+func TestApplySettingsSectionDeletesKey(t *testing.T) {
+	s, _ := testStore(t)
+	if err := s.ApplySettingsSection("tun", map[string]any{"enable": true}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if err := s.ApplySettingsSection("tun", nil); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	for _, m := range s.List() {
+		if !isSettingsOverlay(m) {
+			continue
+		}
+		raw, _ := s.Read(m.ID)
+		top, _ := parseTopMap(raw)
+		if len(top) != 0 {
+			t.Errorf("overlay = %v, want no keys after delete", top)
+		}
 	}
 }

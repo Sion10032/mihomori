@@ -55,6 +55,10 @@ const (
 // as a read-only entry.
 const SettingsOverlayName = "Global Settings"
 
+// settingsOverlayHeader is the two-line file header prepended on every managed
+// write to the settings overlay, so the body's comments stay stable across saves.
+const settingsOverlayHeader = "# mihomori managed settings: rewritten in full on every dashboard save.\n# To hand-write overrides, create a separate merge overlay instead.\n"
+
 // Editor statuses, surfaced by refresh() when a compose conflict happens.
 const (
 	EditorClean      = "clean"
@@ -507,7 +511,11 @@ func (s *Store) GetActiveID() string {
 func (s *Store) SetActive(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.setActiveLocked(id)
+}
 
+// setActiveLocked is SetActive's lock-free core; callers must hold s.mu.
+func (s *Store) setActiveLocked(id string) error {
 	content, _, err := s.composeLocked(id)
 	if err != nil {
 		return err
@@ -630,6 +638,68 @@ func (s *Store) SetSection(id, key string, value any) error {
 		}
 	}
 	return s.writeIndexLocked(idx)
+}
+
+// ApplySettingsSection persists one top-level config section into the single
+// program-owned settings overlay. value == nil deletes the key. If an active
+// profile exists, it is recomposed so the change takes effect immediately.
+// The overlay file is program-owned: a corrupt/empty overlay is rebuilt rather
+// than failing the dashboard write.
+func (s *Store) ApplySettingsSection(key string, value any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	m, err := s.settingsOverlayLocked()
+	if err != nil {
+		return err
+	}
+	st, _ := s.readStateLocked()
+
+	b, err := os.ReadFile(s.profilePath(m.ID))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	doc, perr := parseTopMap(string(b))
+	if perr != nil || doc == nil {
+		// Program-owned file: rebuild instead of failing the dashboard write.
+		doc = map[string]any{}
+	}
+	if value == nil {
+		delete(doc, key)
+	} else {
+		doc[key] = value
+	}
+
+	out := settingsOverlayHeader
+	if len(doc) > 0 {
+		body, err := yaml.Marshal(doc)
+		if err != nil {
+			return err
+		}
+		out += string(body)
+	}
+	if err := s.atomicWrite(s.profilePath(m.ID), out); err != nil {
+		return err
+	}
+
+	// Bump updatedAt and normalize Enabled: a restored/hand-edited index may
+	// carry enabled:false, which compose would skip.
+	idx, _ := s.readIndexLocked()
+	for i := range idx {
+		if idx[i].ID == m.ID {
+			idx[i].UpdatedAt = s.now()
+			idx[i].Enabled = nil
+			break
+		}
+	}
+	if err := s.writeIndexLocked(idx); err != nil {
+		return err
+	}
+
+	if st.ActiveID == "" {
+		return nil
+	}
+	return s.setActiveLocked(st.ActiveID)
 }
 
 // --- internals (assume s.mu is held) ---
