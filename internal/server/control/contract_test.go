@@ -233,6 +233,111 @@ func TestContractProfilesActiveField(t *testing.T) {
 	}
 }
 
+// TestSectionRouteUsesSettingsOverlay verifies PUT/GET /config/section now go
+// through the managed settings overlay instead of requiring an active profile,
+// and that the overlay itself is read-only through the profile routes.
+func TestSectionRouteUsesSettingsOverlay(t *testing.T) {
+	r := contractRouter(t)
+	handler := New(r)
+
+	// No active profile: previously 409 — now it must persist (restart=false
+	// so the /usr/bin/false supervisor is never asked to start).
+	rec := doRequest(handler, "PUT", "/api/control/config/section",
+		`{"key":"mixed-port","value":7897,"restart":false}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT section without active profile = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	rec = doRequest(handler, "GET", "/api/control/config/section?key=mixed-port", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET section = %d, want 200", rec.Code)
+	}
+	var got any
+	jsonDecode(t, rec.Body, &got)
+	if got != float64(7897) {
+		t.Errorf("section value = %v, want 7897", got)
+	}
+
+	// Exactly one program-owned settings overlay got created.
+	rec = doRequest(handler, "GET", "/api/control/profiles", "")
+	var list []map[string]any
+	jsonDecode(t, rec.Body, &list)
+	n := 0
+	var id string
+	for _, m := range list {
+		if m["managedBy"] == "settings" {
+			n++
+			id, _ = m["id"].(string)
+		}
+	}
+	if n != 1 || id == "" {
+		t.Fatalf("settings overlays = %d (id %q), want exactly 1", n, id)
+	}
+
+	// Read-only: PUT and DELETE are refused, GET still exposes the content.
+	if rec := doRequest(handler, "PUT", "/api/control/profiles/"+id, `{"name":"hacked"}`); rec.Code != http.StatusForbidden {
+		t.Errorf("PUT settings overlay = %d, want 403", rec.Code)
+	}
+	if rec := doRequest(handler, "DELETE", "/api/control/profiles/"+id, ""); rec.Code != http.StatusForbidden {
+		t.Errorf("DELETE settings overlay = %d, want 403", rec.Code)
+	}
+	rec = doRequest(handler, "GET", "/api/control/profiles/"+id, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET settings overlay = %d, want 200", rec.Code)
+	}
+	var detail struct {
+		Meta    map[string]any `json:"meta"`
+		Content string         `json:"content"`
+	}
+	jsonDecode(t, rec.Body, &detail)
+	if !strings.Contains(detail.Content, "mixed-port: 7897") {
+		t.Errorf("content = %q, want the persisted key", detail.Content)
+	}
+}
+
+// TestCreateRejectsForgedSettingsOverlay pins that clients cannot mint their
+// own managedBy=settings profile through POST /profiles.
+func TestCreateRejectsForgedSettingsOverlay(t *testing.T) {
+	r := contractRouter(t)
+	handler := New(r)
+	rec := doRequest(handler, "POST", "/api/control/profiles",
+		`{"name":"fake","type":"merge","managedBy":"settings"}`)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("POST forged settings overlay = %d, want 403", rec.Code)
+	}
+}
+
+// TestVisualEditorOverlayRoutesUnchanged pins that the visual-editor overlay
+// guard keeps its wording and that such overlays stay deletable.
+func TestVisualEditorOverlayRoutesUnchanged(t *testing.T) {
+	r := contractRouter(t)
+	handler := New(r)
+	base := doRequest(handler, "POST", "/api/control/profiles", `{"name":"b","content":"a: 1"}`)
+	var bm map[string]any
+	jsonDecode(t, base.Body, &bm)
+	baseID, _ := bm["id"].(string)
+
+	rec := doRequest(handler, "POST", "/api/control/profiles",
+		`{"name":"ve","type":"merge","baseProfileId":"`+baseID+`","managedBy":"visual-editor"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create visual-editor overlay = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var vm map[string]any
+	jsonDecode(t, rec.Body, &vm)
+	veID, _ := vm["id"].(string)
+
+	rec = doRequest(handler, "PUT", "/api/control/profiles/"+veID, `{"name":"hacked"}`)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("PUT visual-editor overlay = %d, want 403", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "managed visual editor overlays are read-only") {
+		t.Errorf("403 message = %s, want the existing wording", rec.Body.String())
+	}
+	// Visual-editor overlays stay deletable (deleting clears the pending edit).
+	if rec := doRequest(handler, "DELETE", "/api/control/profiles/"+veID, ""); rec.Code != http.StatusNoContent {
+		t.Errorf("DELETE visual-editor overlay = %d, want 204", rec.Code)
+	}
+}
+
 func doRequest(handler http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	var req *http.Request
 	if body != "" {
