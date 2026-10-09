@@ -434,6 +434,22 @@ func TestSetSectionUpdatesContent(t *testing.T) {
 	}
 }
 
+func TestSetSectionParseErrorKeepsContent(t *testing.T) {
+	s, _ := testStore(t)
+	content := "a: 1\na: 2\n" // duplicate key: yaml.v3 errors
+	m, err := s.Create(CreateInput{Name: "p", Content: content})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := s.SetSection(m.ID, "mixed-port", 7897); err == nil {
+		t.Error("SetSection on unparseable content returned nil, want error")
+	}
+	got, _ := s.Read(m.ID)
+	if got != content {
+		t.Errorf("content = %q, want untouched %q", got, content)
+	}
+}
+
 func TestCreateSettingsOverlayValidation(t *testing.T) {
 	s, _ := testStore(t)
 	if _, err := s.Create(CreateInput{Name: "bad", Type: TypeLocal, ManagedBy: ManagedBySettings}); err == nil {

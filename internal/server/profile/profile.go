@@ -638,8 +638,12 @@ func (s *Store) SetSection(id, key string, value any) error {
 	if err != nil {
 		return err
 	}
-	parsed, _ := parseTopMap(string(content))
+	parsed, err := parseTopMap(string(content))
+	if err != nil {
+		return fmt.Errorf("parse profile %s: %w", id, err)
+	}
 	if parsed == nil {
+		// Non-mapping document (parseTopMap returns nil for e.g. a sequence).
 		parsed = map[string]any{}
 	}
 	if value == nil {
