@@ -585,9 +585,35 @@ func (s *Store) GetSection(id, key string) (any, error) {
 	if _, err := s.findMetaLocked(id); err != nil {
 		return nil, err
 	}
+	return s.sectionLocked(id, key)
+}
+
+// GetEffectiveSection returns the value the running config actually uses for a
+// top-level key: the program-owned settings overlay first, then the active
+// base profile. Never creates the overlay.
+func (s *Store) GetEffectiveSection(key string) (any, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if m, ok := s.findSettingsOverlayLocked(); ok {
+		if v, err := s.sectionLocked(m.ID, key); err == nil && v != nil {
+			return v, nil
+		}
+	}
+	st, _ := s.readStateLocked()
+	if st.ActiveID == "" {
+		return nil, nil
+	}
+	return s.sectionLocked(st.ActiveID, key)
+}
+
+// sectionLocked reads a profile's YAML and returns one top-level key. Missing
+// meta/file, parse failure, or absent key all return (nil, nil); callers decide
+// whether that should fall through to another source. Callers must hold s.mu.
+func (s *Store) sectionLocked(id, key string) (any, error) {
 	content, err := os.ReadFile(s.profilePath(id))
 	if err != nil {
-		return nil, err
+		return nil, nil
 	}
 	parsed, err := parseTopMap(string(content))
 	if err != nil || parsed == nil {
@@ -841,26 +867,55 @@ func (s *Store) composeLocked(id string) (string, []api.Meta, error) {
 
 	var overlays []string
 	var composition []api.Meta
+	var settingsContent string
+	var settingsMeta api.Meta
+	settingsSeen := false
 	for _, m := range idx {
 		// undefined enabled == on (overlay applies). Only explicit `false`
 		// disables it.
 		if m.Enabled != nil && !*m.Enabled {
 			continue
 		}
-		if m.Type == TypeMerge {
-			// Scoped overlay: only applies to its owning base. Legacy overlays
-			// (no baseProfileId) stay global.
-			if m.BaseProfileID != "" && m.BaseProfileID != id {
+		if m.Type != TypeMerge {
+			// Script overlays are silently skipped (no scriptRunner in this build).
+			continue
+		}
+		// Scoped overlay: only applies to its owning base. Legacy overlays
+		// (no baseProfileId) stay global.
+		if m.BaseProfileID != "" && m.BaseProfileID != id {
+			continue
+		}
+		if isSettingsOverlay(m) {
+			// Program-owned layer: applied last so dashboard settings beat
+			// every user overlay. Only the first marker is authoritative
+			// (the same one writes target); duplicates are ignored entirely.
+			if settingsSeen {
 				continue
 			}
+			settingsSeen = true
 			b, err := os.ReadFile(s.profilePath(m.ID))
 			if err != nil {
 				return "", nil, err
 			}
-			overlays = append(overlays, string(b))
-			composition = append(composition, m)
+			// An empty settings layer must not force a marshal round-trip:
+			// no overlays means the base stays byte-for-byte verbatim.
+			if parsed, err := parseTopMap(string(b)); err != nil || len(parsed) == 0 {
+				continue
+			}
+			settingsContent = string(b)
+			settingsMeta = m
+			continue
 		}
-		// Script overlays are silently skipped (no scriptRunner in this build).
+		b, err := os.ReadFile(s.profilePath(m.ID))
+		if err != nil {
+			return "", nil, err
+		}
+		overlays = append(overlays, string(b))
+		composition = append(composition, m)
+	}
+	if settingsContent != "" {
+		overlays = append(overlays, settingsContent)
+		composition = append(composition, settingsMeta)
 	}
 
 	// No overlays → write the base verbatim. This preserves user formatting
