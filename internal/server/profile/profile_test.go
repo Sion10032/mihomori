@@ -430,3 +430,47 @@ func TestSetSectionUpdatesContent(t *testing.T) {
 		t.Errorf("dns.enable = %v, want false after SetSection", dns["enable"])
 	}
 }
+
+func TestCreateSettingsOverlayValidation(t *testing.T) {
+	s, _ := testStore(t)
+	if _, err := s.Create(CreateInput{Name: "bad", Type: TypeLocal, ManagedBy: ManagedBySettings}); err == nil {
+		t.Error("local settings overlay accepted, want error")
+	}
+	if _, err := s.Create(CreateInput{Name: "bad", Type: TypeMerge, BaseProfileID: "base-1", ManagedBy: ManagedBySettings}); err == nil {
+		t.Error("scoped settings overlay accepted, want error")
+	}
+	m, err := s.Create(CreateInput{Name: SettingsOverlayName, Type: TypeMerge, ManagedBy: ManagedBySettings})
+	if err != nil {
+		t.Fatalf("Create settings overlay: %v", err)
+	}
+	if m.ManagedBy != ManagedBySettings || m.BaseProfileID != "" || !isSettingsOverlay(m) {
+		t.Errorf("meta = %+v, want unscoped settings overlay", m)
+	}
+}
+
+func TestSettingsOverlayLockedCreatesOnce(t *testing.T) {
+	s, _ := testStore(t)
+	s.mu.Lock()
+	first, err := s.settingsOverlayLocked()
+	if err != nil {
+		s.mu.Unlock()
+		t.Fatalf("settingsOverlayLocked: %v", err)
+	}
+	second, err := s.settingsOverlayLocked()
+	s.mu.Unlock()
+	if err != nil {
+		t.Fatalf("settingsOverlayLocked (2nd): %v", err)
+	}
+	if first.ID != second.ID {
+		t.Errorf("ids differ: %s vs %s", first.ID, second.ID)
+	}
+	count := 0
+	for _, m := range s.List() {
+		if isSettingsOverlay(m) {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("settings overlays = %d, want 1", count)
+	}
+}

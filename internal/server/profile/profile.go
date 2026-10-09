@@ -36,14 +36,24 @@ import (
 // Profile types. Strings match the TS ProfileType union so the dashboard's
 // type-narrowed UI works without translation.
 const (
-	TypeLocal   = "local"
-	TypeRemote  = "remote"
-	TypeMerge   = "merge"
-	TypeScript  = "script"
+	TypeLocal  = "local"
+	TypeRemote = "remote"
+	TypeMerge  = "merge"
+	TypeScript = "script"
 )
 
-// ManagedBy values. Only VisualEditor exists today.
-const ManagedByVisualEditor = "visual-editor"
+// ManagedBy values. VisualEditor is used for the metacubexd visual editor
+// overlays (scoped to a base); Settings marks program-owned overlays created
+// for the settings panel.
+const (
+	ManagedByVisualEditor = "visual-editor"
+	ManagedBySettings     = "settings"
+)
+
+// SettingsOverlayName is the display name of the single program-owned global
+// merge overlay backing the settings panel. It shows up in the profile list
+// as a read-only entry.
+const SettingsOverlayName = "Global Settings"
 
 // Editor statuses, surfaced by refresh() when a compose conflict happens.
 const (
@@ -57,8 +67,6 @@ const DefaultUA = "clash.meta"
 
 // defaultSubscriptionTimeout caps subscription fetch/refresh network I/O.
 const defaultSubscriptionTimeout = 30 * time.Second
-
-
 
 // CreateInput is the body of POST /profiles.
 type CreateInput struct {
@@ -82,11 +90,11 @@ type UpdateInput struct {
 
 // Sentinels returned by Store ops; the control layer maps them to HTTP status.
 var (
-	ErrNotFound            = errors.New("profile not found")
-	ErrScriptNotSupported  = errors.New("script profiles not supported in this build")
-	ErrIsOverlay           = errors.New("profile is an overlay and cannot be the active base")
-	ErrNotRemote           = errors.New("profile is not a remote subscription")
-	ErrMultipleOverlays    = errors.New("multiple visual editor overlays found for profile")
+	ErrNotFound           = errors.New("profile not found")
+	ErrScriptNotSupported = errors.New("script profiles not supported in this build")
+	ErrIsOverlay          = errors.New("profile is an overlay and cannot be the active base")
+	ErrNotRemote          = errors.New("profile is not a remote subscription")
+	ErrMultipleOverlays   = errors.New("multiple visual editor overlays found for profile")
 )
 
 // SubscriptionFetchError preserves the upstream HTTP status so the control
@@ -181,7 +189,11 @@ func (s *Store) Read(id string) (string, error) {
 func (s *Store) Create(in CreateInput) (api.Meta, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.createLocked(in)
+}
 
+// createLocked is Create's lock-free core; callers must hold s.mu.
+func (s *Store) createLocked(in CreateInput) (api.Meta, error) {
 	if err := os.MkdirAll(s.dir, 0o755); err != nil {
 		return api.Meta{}, err
 	}
@@ -207,6 +219,11 @@ func (s *Store) Create(in CreateInput) (api.Meta, error) {
 				return api.Meta{}, fmt.Errorf("visual editor overlay already exists for %s", in.BaseProfileID)
 			}
 		}
+	}
+	// Settings overlays are program-owned: they must be unscoped merge
+	// profiles (compose applies them globally, last).
+	if in.ManagedBy == ManagedBySettings && (t != TypeMerge || in.BaseProfileID != "") {
+		return api.Meta{}, errors.New("settings overlays must be unscoped merge profiles")
 	}
 
 	id := s.idGen()
@@ -619,8 +636,8 @@ func (s *Store) SetSection(id, key string, value any) error {
 
 func (s *Store) profilePath(id string) string { return filepath.Join(s.dir, id+".yaml") }
 
-func (s *Store) indexPath() string  { return filepath.Join(s.dir, "index.json") }
-func (s *Store) statePath() string  { return filepath.Join(s.dir, "state.json") }
+func (s *Store) indexPath() string { return filepath.Join(s.dir, "index.json") }
+func (s *Store) statePath() string { return filepath.Join(s.dir, "state.json") }
 
 func (s *Store) findMetaLocked(id string) (api.Meta, error) {
 	idx, _ := s.readIndexLocked()
@@ -630,6 +647,39 @@ func (s *Store) findMetaLocked(id string) (api.Meta, error) {
 		}
 	}
 	return api.Meta{}, ErrNotFound
+}
+
+// isSettingsOverlay reports whether a meta identifies the program-owned
+// settings overlay: an unscoped (global) merge profile managed by Settings.
+func isSettingsOverlay(m api.Meta) bool {
+	return m.ManagedBy == ManagedBySettings && m.BaseProfileID == "" && m.Type == TypeMerge
+}
+
+// findSettingsOverlayLocked returns the first settings overlay in index order,
+// or the zero Meta and false if none exists. It only reads — creation is left
+// to settingsOverlayLocked.
+func (s *Store) findSettingsOverlayLocked() (api.Meta, bool) {
+	idx, _ := s.readIndexLocked()
+	for _, m := range idx {
+		if isSettingsOverlay(m) {
+			return m, true
+		}
+	}
+	return api.Meta{}, false
+}
+
+// settingsOverlayLocked returns the singleton settings overlay, creating it
+// lazily on first use. Callers must hold s.mu; cascades into createLocked
+// (never Create, which would deadlock on re-acquiring the lock).
+func (s *Store) settingsOverlayLocked() (api.Meta, error) {
+	if m, ok := s.findSettingsOverlayLocked(); ok {
+		return m, nil
+	}
+	return s.createLocked(CreateInput{
+		Name:      SettingsOverlayName,
+		Type:      TypeMerge,
+		ManagedBy: ManagedBySettings,
+	})
 }
 
 // readIndexLocked reads index.json. Missing file → empty list (first run).
