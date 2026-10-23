@@ -74,7 +74,7 @@ Deploy the binary as a system service (requires root or sudo):
 
 ```bash
 # One-click install (auto-detects systemd / OpenRC, generates random secrets, enables and starts the service)
-curl -fsSL https://raw.githubusercontent.com/Sion10032/mihomori/main/deploy/mihomori-ctl.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Sion10032/mihomori/main/deploy/mihomori-ctl.sh | sudo bash -s -- install
 ```
 
 Manual installation (from release tarball):

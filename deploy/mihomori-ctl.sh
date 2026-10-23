@@ -55,7 +55,6 @@ SERVICE_NAME="mihomori"
 SYSTEM_USER="mihomori"
 CONF_DIR="/etc/mihomori"
 DATA_DIR="/var/lib/mihomori"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ── Colors ────────────────────────────────────────────────────────────────
 
@@ -74,7 +73,7 @@ die()   { error "$@"; exit 1; }
 
 check_root() {
     if [ "$(id -u)" -ne 0 ]; then
-        die "This script must be run as root. Try: sudo bash $0 $*"
+        die "This script must be run as root. Try: sudo bash mihomori-ctl.sh $*"
     fi
 }
 
@@ -404,7 +403,7 @@ check_mihomo() {
         warn "mihomo not found in PATH."
         warn "The server will start but the kernel will not be available."
         warn "Install mihomo to /usr/local/bin/mihomo, or:"
-        warn "  bash $(basename "$0") config set MIHOMO_BIN=/path/to/mihomo"
+        warn "  bash mihomori-ctl.sh config set MIHOMO_BIN=/path/to/mihomo"
     fi
 }
 
@@ -719,7 +718,34 @@ cmd_config() {
 # ═══════════════════════════════════════════════════════════════════════════
 
 usage() {
-    sed -n '2,/^$/p' "$0" | sed 's/^# //' | sed 's/^#//'
+    if [ -f "$0" ]; then
+        sed -n '2,/^$/p' "$0" | sed 's/^# //' | sed 's/^#//'
+        exit 0
+    fi
+    # Piped from stdin (curl | bash): $0 is "bash", not a readable script file.
+    cat << 'USAGE'
+mihomori-ctl.sh — Manage mihomori as a systemd or OpenRC service.
+
+Usage:
+  curl -fsSL https://raw.githubusercontent.com/Sion10032/mihomori/main/deploy/mihomori-ctl.sh | sudo bash -s -- <command> [options]
+
+Commands:
+  install                         Install the service (downloads latest release)
+  install --bin <path>            Install using a local pre-built binary
+  install --version <vX.Y.Z>      Install a pinned release version
+  install --token <t> --secret <s>
+                                  Pre-set CONTROL_TOKEN / CLASH_SECRET
+  update [--version <v>] [--force]
+                                  Replace the binary and restart the service
+  uninstall [--remove-data] [--remove-user]
+                                  Remove the service
+  config show | get <KEY> | set <KEY>=<VALUE>
+                                  View or modify service configuration
+  help                            Show this help
+
+Download the script first and run `bash mihomori-ctl.sh --help` for full
+options, or see https://github.com/Sion10032/mihomori#systemd--openrc-service
+USAGE
     exit 0
 }
 

@@ -74,7 +74,7 @@ services:
 
 ```bash
 # 一键安装（自动检测 systemd / OpenRC，生成随机密钥，启用并启动服务）
-curl -fsSL https://raw.githubusercontent.com/Sion10032/mihomori/main/deploy/mihomori-ctl.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Sion10032/mihomori/main/deploy/mihomori-ctl.sh | sudo bash -s -- install
 ```
 
 手动安装（从 release tarball）：
