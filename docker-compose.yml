@@ -20,6 +20,10 @@ services:
     # ── Port mapping (default) ──────────────────────────────────────
     ports:
       - "8080:8080"   # dashboard + control/clash API
+      # Host port must match the effective mixed-port. MIXED_PORT is 0 by
+      # default, so mixed-port comes from the active config (mihomo's own
+      # default is 7890) or from the dashboard — update this mapping if you
+      # change it, or use host networking.
       - "7890:7890"   # mihomo mixed proxy
       # 9090 intentionally NOT published — internal-only
     # ── Host networking (alternative) ───────────────────────────────

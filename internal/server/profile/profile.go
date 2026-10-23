@@ -36,14 +36,28 @@ import (
 // Profile types. Strings match the TS ProfileType union so the dashboard's
 // type-narrowed UI works without translation.
 const (
-	TypeLocal   = "local"
-	TypeRemote  = "remote"
-	TypeMerge   = "merge"
-	TypeScript  = "script"
+	TypeLocal  = "local"
+	TypeRemote = "remote"
+	TypeMerge  = "merge"
+	TypeScript = "script"
 )
 
-// ManagedBy values. Only VisualEditor exists today.
-const ManagedByVisualEditor = "visual-editor"
+// ManagedBy values. VisualEditor is used for the metacubexd visual editor
+// overlays (scoped to a base); Settings marks program-owned overlays created
+// for the settings panel.
+const (
+	ManagedByVisualEditor = "visual-editor"
+	ManagedBySettings     = "settings"
+)
+
+// SettingsOverlayName is the display name of the single program-owned global
+// merge overlay backing the settings panel. It shows up in the profile list
+// as a read-only entry.
+const SettingsOverlayName = "Global Settings"
+
+// settingsOverlayHeader is the two-line file header prepended on every managed
+// write to the settings overlay, so the body's comments stay stable across saves.
+const settingsOverlayHeader = "# mihomori managed settings: rewritten in full on every dashboard save.\n# To hand-write overrides, create a separate merge overlay instead.\n"
 
 // Editor statuses, surfaced by refresh() when a compose conflict happens.
 const (
@@ -57,8 +71,6 @@ const DefaultUA = "clash.meta"
 
 // defaultSubscriptionTimeout caps subscription fetch/refresh network I/O.
 const defaultSubscriptionTimeout = 30 * time.Second
-
-
 
 // CreateInput is the body of POST /profiles.
 type CreateInput struct {
@@ -82,11 +94,11 @@ type UpdateInput struct {
 
 // Sentinels returned by Store ops; the control layer maps them to HTTP status.
 var (
-	ErrNotFound            = errors.New("profile not found")
-	ErrScriptNotSupported  = errors.New("script profiles not supported in this build")
-	ErrIsOverlay           = errors.New("profile is an overlay and cannot be the active base")
-	ErrNotRemote           = errors.New("profile is not a remote subscription")
-	ErrMultipleOverlays    = errors.New("multiple visual editor overlays found for profile")
+	ErrNotFound           = errors.New("profile not found")
+	ErrScriptNotSupported = errors.New("script profiles not supported in this build")
+	ErrIsOverlay          = errors.New("profile is an overlay and cannot be the active base")
+	ErrNotRemote          = errors.New("profile is not a remote subscription")
+	ErrMultipleOverlays   = errors.New("multiple visual editor overlays found for profile")
 )
 
 // SubscriptionFetchError preserves the upstream HTTP status so the control
@@ -181,7 +193,11 @@ func (s *Store) Read(id string) (string, error) {
 func (s *Store) Create(in CreateInput) (api.Meta, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.createLocked(in)
+}
 
+// createLocked is Create's lock-free core; callers must hold s.mu.
+func (s *Store) createLocked(in CreateInput) (api.Meta, error) {
 	if err := os.MkdirAll(s.dir, 0o755); err != nil {
 		return api.Meta{}, err
 	}
@@ -207,6 +223,11 @@ func (s *Store) Create(in CreateInput) (api.Meta, error) {
 				return api.Meta{}, fmt.Errorf("visual editor overlay already exists for %s", in.BaseProfileID)
 			}
 		}
+	}
+	// Settings overlays are program-owned: they must be unscoped merge
+	// profiles (compose applies them globally, last).
+	if in.ManagedBy == ManagedBySettings && (t != TypeMerge || in.BaseProfileID != "") {
+		return api.Meta{}, errors.New("settings overlays must be unscoped merge profiles")
 	}
 
 	id := s.idGen()
@@ -490,7 +511,11 @@ func (s *Store) GetActiveID() string {
 func (s *Store) SetActive(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.setActiveLocked(id)
+}
 
+// setActiveLocked is SetActive's lock-free core; callers must hold s.mu.
+func (s *Store) setActiveLocked(id string) error {
 	content, _, err := s.composeLocked(id)
 	if err != nil {
 		return err
@@ -560,9 +585,35 @@ func (s *Store) GetSection(id, key string) (any, error) {
 	if _, err := s.findMetaLocked(id); err != nil {
 		return nil, err
 	}
+	return s.sectionLocked(id, key)
+}
+
+// GetEffectiveSection returns the value the running config actually uses for a
+// top-level key: the program-owned settings overlay first, then the active
+// base profile. Never creates the overlay.
+func (s *Store) GetEffectiveSection(key string) (any, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if m, ok := s.findSettingsOverlayLocked(); ok {
+		if v, err := s.sectionLocked(m.ID, key); err == nil && v != nil {
+			return v, nil
+		}
+	}
+	st, _ := s.readStateLocked()
+	if st.ActiveID == "" {
+		return nil, nil
+	}
+	return s.sectionLocked(st.ActiveID, key)
+}
+
+// sectionLocked reads a profile's YAML and returns one top-level key. Missing
+// meta/file, parse failure, or absent key all return (nil, nil); callers decide
+// whether that should fall through to another source. Callers must hold s.mu.
+func (s *Store) sectionLocked(id, key string) (any, error) {
 	content, err := os.ReadFile(s.profilePath(id))
 	if err != nil {
-		return nil, err
+		return nil, nil
 	}
 	parsed, err := parseTopMap(string(content))
 	if err != nil || parsed == nil {
@@ -587,8 +638,12 @@ func (s *Store) SetSection(id, key string, value any) error {
 	if err != nil {
 		return err
 	}
-	parsed, _ := parseTopMap(string(content))
+	parsed, err := parseTopMap(string(content))
+	if err != nil {
+		return fmt.Errorf("parse profile %s: %w", id, err)
+	}
 	if parsed == nil {
+		// Non-mapping document (parseTopMap returns nil for e.g. a sequence).
 		parsed = map[string]any{}
 	}
 	if value == nil {
@@ -615,12 +670,74 @@ func (s *Store) SetSection(id, key string, value any) error {
 	return s.writeIndexLocked(idx)
 }
 
+// ApplySettingsSection persists one top-level config section into the single
+// program-owned settings overlay. value == nil deletes the key. If an active
+// profile exists, it is recomposed so the change takes effect immediately.
+// The overlay file is program-owned: a corrupt/empty overlay is rebuilt rather
+// than failing the dashboard write.
+func (s *Store) ApplySettingsSection(key string, value any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	m, err := s.settingsOverlayLocked()
+	if err != nil {
+		return err
+	}
+	st, _ := s.readStateLocked()
+
+	b, err := os.ReadFile(s.profilePath(m.ID))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	doc, perr := parseTopMap(string(b))
+	if perr != nil || doc == nil {
+		// Program-owned file: rebuild instead of failing the dashboard write.
+		doc = map[string]any{}
+	}
+	if value == nil {
+		delete(doc, key)
+	} else {
+		doc[key] = value
+	}
+
+	out := settingsOverlayHeader
+	if len(doc) > 0 {
+		body, err := yaml.Marshal(doc)
+		if err != nil {
+			return err
+		}
+		out += string(body)
+	}
+	if err := s.atomicWrite(s.profilePath(m.ID), out); err != nil {
+		return err
+	}
+
+	// Bump updatedAt and normalize Enabled: a restored/hand-edited index may
+	// carry enabled:false, which compose would skip.
+	idx, _ := s.readIndexLocked()
+	for i := range idx {
+		if idx[i].ID == m.ID {
+			idx[i].UpdatedAt = s.now()
+			idx[i].Enabled = nil
+			break
+		}
+	}
+	if err := s.writeIndexLocked(idx); err != nil {
+		return err
+	}
+
+	if st.ActiveID == "" {
+		return nil
+	}
+	return s.setActiveLocked(st.ActiveID)
+}
+
 // --- internals (assume s.mu is held) ---
 
 func (s *Store) profilePath(id string) string { return filepath.Join(s.dir, id+".yaml") }
 
-func (s *Store) indexPath() string  { return filepath.Join(s.dir, "index.json") }
-func (s *Store) statePath() string  { return filepath.Join(s.dir, "state.json") }
+func (s *Store) indexPath() string { return filepath.Join(s.dir, "index.json") }
+func (s *Store) statePath() string { return filepath.Join(s.dir, "state.json") }
 
 func (s *Store) findMetaLocked(id string) (api.Meta, error) {
 	idx, _ := s.readIndexLocked()
@@ -630,6 +747,39 @@ func (s *Store) findMetaLocked(id string) (api.Meta, error) {
 		}
 	}
 	return api.Meta{}, ErrNotFound
+}
+
+// isSettingsOverlay reports whether a meta identifies the program-owned
+// settings overlay: an unscoped (global) merge profile managed by Settings.
+func isSettingsOverlay(m api.Meta) bool {
+	return m.ManagedBy == ManagedBySettings && m.BaseProfileID == "" && m.Type == TypeMerge
+}
+
+// findSettingsOverlayLocked returns the first settings overlay in index order,
+// or the zero Meta and false if none exists. It only reads — creation is left
+// to settingsOverlayLocked.
+func (s *Store) findSettingsOverlayLocked() (api.Meta, bool) {
+	idx, _ := s.readIndexLocked()
+	for _, m := range idx {
+		if isSettingsOverlay(m) {
+			return m, true
+		}
+	}
+	return api.Meta{}, false
+}
+
+// settingsOverlayLocked returns the singleton settings overlay, creating it
+// lazily on first use. Callers must hold s.mu; cascades into createLocked
+// (never Create, which would deadlock on re-acquiring the lock).
+func (s *Store) settingsOverlayLocked() (api.Meta, error) {
+	if m, ok := s.findSettingsOverlayLocked(); ok {
+		return m, nil
+	}
+	return s.createLocked(CreateInput{
+		Name:      SettingsOverlayName,
+		Type:      TypeMerge,
+		ManagedBy: ManagedBySettings,
+	})
 }
 
 // readIndexLocked reads index.json. Missing file → empty list (first run).
@@ -721,26 +871,55 @@ func (s *Store) composeLocked(id string) (string, []api.Meta, error) {
 
 	var overlays []string
 	var composition []api.Meta
+	var settingsContent string
+	var settingsMeta api.Meta
+	settingsSeen := false
 	for _, m := range idx {
 		// undefined enabled == on (overlay applies). Only explicit `false`
 		// disables it.
 		if m.Enabled != nil && !*m.Enabled {
 			continue
 		}
-		if m.Type == TypeMerge {
-			// Scoped overlay: only applies to its owning base. Legacy overlays
-			// (no baseProfileId) stay global.
-			if m.BaseProfileID != "" && m.BaseProfileID != id {
+		if m.Type != TypeMerge {
+			// Script overlays are silently skipped (no scriptRunner in this build).
+			continue
+		}
+		// Scoped overlay: only applies to its owning base. Legacy overlays
+		// (no baseProfileId) stay global.
+		if m.BaseProfileID != "" && m.BaseProfileID != id {
+			continue
+		}
+		if isSettingsOverlay(m) {
+			// Program-owned layer: applied last so dashboard settings beat
+			// every user overlay. Only the first marker is authoritative
+			// (the same one writes target); duplicates are ignored entirely.
+			if settingsSeen {
 				continue
 			}
+			settingsSeen = true
 			b, err := os.ReadFile(s.profilePath(m.ID))
 			if err != nil {
 				return "", nil, err
 			}
-			overlays = append(overlays, string(b))
-			composition = append(composition, m)
+			// An empty settings layer must not force a marshal round-trip:
+			// no overlays means the base stays byte-for-byte verbatim.
+			if parsed, err := parseTopMap(string(b)); err != nil || len(parsed) == 0 {
+				continue
+			}
+			settingsContent = string(b)
+			settingsMeta = m
+			continue
 		}
-		// Script overlays are silently skipped (no scriptRunner in this build).
+		b, err := os.ReadFile(s.profilePath(m.ID))
+		if err != nil {
+			return "", nil, err
+		}
+		overlays = append(overlays, string(b))
+		composition = append(composition, m)
+	}
+	if settingsContent != "" {
+		overlays = append(overlays, settingsContent)
+		composition = append(composition, settingsMeta)
 	}
 
 	// No overlays → write the base verbatim. This preserves user formatting

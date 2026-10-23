@@ -5,8 +5,8 @@
 //   GET  /config            active profile's source YAML (text/yaml)
 //   PUT  /config            overwrite active profile content + re-activate + restart
 //   GET  /config/runtime    the file mihomo actually runs (-f), post-injection
-//   GET  /config/section    one top-level key from the active profile (JSON)
-//   PUT  /config/section    replace one top-level key + re-activate (optionally restart)
+//   GET  /config/section    one effective top-level key (settings overlay + active profile)
+//   PUT  /config/section    replace one top-level key in the managed settings overlay + re-activate (optionally restart)
 package control
 
 import (
@@ -89,26 +89,17 @@ func registerConfigRoutes(r Router, mux chi.Router) {
 
 	mux.Get("/api/control/config/section", func(w http.ResponseWriter, req *http.Request) {
 		key := req.URL.Query().Get("key")
-		activeID := r.Profiles.GetActiveID()
-		var value any
-		if activeID != "" {
-			v, err := r.Profiles.GetSection(activeID, key)
-			if err == nil {
-				value = v
-			}
+		v, err := r.Profiles.GetEffectiveSection(key)
+		if err != nil {
+			v = nil
 		}
-		// Serialize explicitly so an absent section / no-active-profile still
+		// Serialize explicitly so an absent section / unreadable overlay still
 		// yields a JSON `null` body (Go's nil any marshals to null).
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(value)
+		_ = json.NewEncoder(w).Encode(v)
 	})
 
 	mux.Put("/api/control/config/section", func(w http.ResponseWriter, req *http.Request) {
-		activeID := r.Profiles.GetActiveID()
-		if activeID == "" {
-			writeJSON(w, http.StatusConflict, map[string]string{"error": "no active profile"})
-			return
-		}
 		var body struct {
 			Key     string `json:"key"`
 			Value   any    `json:"value"`
@@ -122,11 +113,10 @@ func registerConfigRoutes(r Router, mux chi.Router) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "key required"})
 			return
 		}
-		if err := r.Profiles.SetSection(activeID, body.Key, body.Value); err != nil {
-			respondProfileErr(w, err)
-			return
-		}
-		if err := r.Profiles.SetActive(activeID); err != nil {
+		// Sections persist into the program-owned settings overlay so they
+		// survive subscription refresh, profile switches and restarts. The
+		// overlay is composed last, so it wins over the active profile.
+		if err := r.Profiles.ApplySettingsSection(body.Key, body.Value); err != nil {
 			respondProfileErr(w, err)
 			return
 		}

@@ -1,12 +1,15 @@
 package profile
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"mihomori/internal/api"
 )
 
 // testStore creates a Store in a temp dir with deterministic ID generation.
@@ -428,5 +431,339 @@ func TestSetSectionUpdatesContent(t *testing.T) {
 	dns := val.(map[string]any)
 	if dns["enable"] != false {
 		t.Errorf("dns.enable = %v, want false after SetSection", dns["enable"])
+	}
+}
+
+func TestSetSectionParseErrorKeepsContent(t *testing.T) {
+	s, _ := testStore(t)
+	content := "a: 1\na: 2\n" // duplicate key: yaml.v3 errors
+	m, err := s.Create(CreateInput{Name: "p", Content: content})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := s.SetSection(m.ID, "mixed-port", 7897); err == nil {
+		t.Error("SetSection on unparseable content returned nil, want error")
+	}
+	got, _ := s.Read(m.ID)
+	if got != content {
+		t.Errorf("content = %q, want untouched %q", got, content)
+	}
+}
+
+func TestCreateSettingsOverlayValidation(t *testing.T) {
+	s, _ := testStore(t)
+	if _, err := s.Create(CreateInput{Name: "bad", Type: TypeLocal, ManagedBy: ManagedBySettings}); err == nil {
+		t.Error("local settings overlay accepted, want error")
+	}
+	if _, err := s.Create(CreateInput{Name: "bad", Type: TypeMerge, BaseProfileID: "base-1", ManagedBy: ManagedBySettings}); err == nil {
+		t.Error("scoped settings overlay accepted, want error")
+	}
+	m, err := s.Create(CreateInput{Name: SettingsOverlayName, Type: TypeMerge, ManagedBy: ManagedBySettings})
+	if err != nil {
+		t.Fatalf("Create settings overlay: %v", err)
+	}
+	if m.ManagedBy != ManagedBySettings || m.BaseProfileID != "" || !isSettingsOverlay(m) {
+		t.Errorf("meta = %+v, want unscoped settings overlay", m)
+	}
+}
+
+func TestSettingsOverlayLockedCreatesOnce(t *testing.T) {
+	s, _ := testStore(t)
+	s.mu.Lock()
+	first, err := s.settingsOverlayLocked()
+	if err != nil {
+		s.mu.Unlock()
+		t.Fatalf("settingsOverlayLocked: %v", err)
+	}
+	second, err := s.settingsOverlayLocked()
+	s.mu.Unlock()
+	if err != nil {
+		t.Fatalf("settingsOverlayLocked (2nd): %v", err)
+	}
+	if first.ID != second.ID {
+		t.Errorf("ids differ: %s vs %s", first.ID, second.ID)
+	}
+	count := 0
+	for _, m := range s.List() {
+		if isSettingsOverlay(m) {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("settings overlays = %d, want 1", count)
+	}
+}
+
+// stubFetcher is a mutable offline subscription source for Refresh tests.
+type stubFetcher struct{ body string }
+
+func (f *stubFetcher) Fetch(ctx context.Context, url, userAgent string) (string, *api.SubscriptionInfo, error) {
+	return f.body, nil, nil
+}
+
+// testStoreWithFetcher is testStore plus a stub subscription fetcher, so
+// ImportFromURL/Refresh can run offline.
+func testStoreWithFetcher(t *testing.T, body string) (*Store, *stubFetcher, string) {
+	t.Helper()
+	s, dir := testStore(t)
+	f := &stubFetcher{body: body}
+	s.fetcher = f
+	return s, f, dir
+}
+
+const subV1 = "mixed-port: 7890\ntun:\n  enable: false\n  auto-route: true\n"
+const subV2 = "mixed-port: 7890\nsocks-port: 7891\ntun:\n  enable: false\n  auto-route: true\n"
+
+func TestApplySettingsSectionWritesOverlayNotBase(t *testing.T) {
+	s, dir := testStore(t)
+	base, _ := s.Create(CreateInput{Name: "base", Content: "mixed-port: 7890\n"})
+	if err := s.SetActive(base.ID); err != nil {
+		t.Fatalf("SetActive: %v", err)
+	}
+	if err := s.ApplySettingsSection("mixed-port", 7897); err != nil {
+		t.Fatalf("ApplySettingsSection: %v", err)
+	}
+	// The base profile file must stay byte-for-byte untouched (the whole bug).
+	got, _ := s.Read(base.ID)
+	if got != "mixed-port: 7890\n" {
+		t.Errorf("base content = %q, want unchanged", got)
+	}
+	active, err := os.ReadFile(filepath.Join(dir, "active.yaml"))
+	if err != nil {
+		t.Fatalf("read active.yaml: %v", err)
+	}
+	top, _ := parseTopMap(string(active))
+	if top["mixed-port"] != 7897 {
+		t.Errorf("active mixed-port = %v, want 7897", top["mixed-port"])
+	}
+}
+
+func TestApplySettingsSectionSurvivesRefresh(t *testing.T) {
+	s, f, dir := testStoreWithFetcher(t, subV1)
+	sub, err := s.ImportFromURL("http://sub.example/x", "sub")
+	if err != nil {
+		t.Fatalf("ImportFromURL: %v", err)
+	}
+	if err := s.SetActive(sub.ID); err != nil {
+		t.Fatalf("SetActive: %v", err)
+	}
+	if err := s.ApplySettingsSection("mixed-port", 7897); err != nil {
+		t.Fatalf("apply mixed-port: %v", err)
+	}
+	if err := s.ApplySettingsSection("tun", map[string]any{"enable": true}); err != nil {
+		t.Fatalf("apply tun: %v", err)
+	}
+
+	f.body = subV2 // subscription updated: same keys, new values
+	if _, err := s.Refresh(sub.ID); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if err := s.SetActive(sub.ID); err != nil {
+		t.Fatalf("SetActive after refresh: %v", err)
+	}
+
+	active, _ := os.ReadFile(filepath.Join(dir, "active.yaml"))
+	top, _ := parseTopMap(string(active))
+	if top["mixed-port"] != 7897 {
+		t.Errorf("mixed-port after refresh = %v, want 7897", top["mixed-port"])
+	}
+	if top["socks-port"] != 7891 {
+		t.Errorf("socks-port after refresh = %v, want 7891 (from new subscription)", top["socks-port"])
+	}
+	tun, _ := top["tun"].(map[string]any)
+	if tun["enable"] != true {
+		t.Errorf("tun.enable = %v, want true (dashboard setting wins)", tun["enable"])
+	}
+	if tun["auto-route"] != true {
+		t.Errorf("tun.auto-route = %v, want true (subscription subkey kept)", tun["auto-route"])
+	}
+}
+
+func TestApplySettingsSectionSurvivesProfileSwitch(t *testing.T) {
+	s, dir := testStore(t)
+	a, _ := s.Create(CreateInput{Name: "a", Content: "mixed-port: 7890\n"})
+	b, _ := s.Create(CreateInput{Name: "b", Content: "port: 7891\n"})
+	s.SetActive(a.ID)
+	if err := s.ApplySettingsSection("mixed-port", 7897); err != nil {
+		t.Fatalf("ApplySettingsSection: %v", err)
+	}
+	if err := s.SetActive(b.ID); err != nil {
+		t.Fatalf("switch to b: %v", err)
+	}
+	active, _ := os.ReadFile(filepath.Join(dir, "active.yaml"))
+	top, _ := parseTopMap(string(active))
+	if top["mixed-port"] != 7897 {
+		t.Errorf("mixed-port after switch = %v, want 7897", top["mixed-port"])
+	}
+}
+
+func TestApplySettingsSectionWithoutActiveProfile(t *testing.T) {
+	s, dir := testStore(t)
+	if err := s.ApplySettingsSection("mixed-port", 7897); err != nil {
+		t.Fatalf("ApplySettingsSection with no active profile: %v", err)
+	}
+	base, _ := s.Create(CreateInput{Name: "base", Content: "mixed-port: 7890\n"})
+	if err := s.SetActive(base.ID); err != nil {
+		t.Fatalf("SetActive: %v", err)
+	}
+	active, _ := os.ReadFile(filepath.Join(dir, "active.yaml"))
+	top, _ := parseTopMap(string(active))
+	if top["mixed-port"] != 7897 {
+		t.Errorf("mixed-port = %v, want 7897 once a base is activated", top["mixed-port"])
+	}
+}
+
+func TestApplySettingsSectionSelfHealsBrokenOverlay(t *testing.T) {
+	s, dir := testStore(t)
+	m, _ := s.Create(CreateInput{Name: SettingsOverlayName, Type: TypeMerge, ManagedBy: ManagedBySettings})
+	writeProfile(t, dir, m.ID, "a: 1\na: 2\n") // duplicate key: unparseable
+
+	if err := s.ApplySettingsSection("mixed-port", 7897); err != nil {
+		t.Fatalf("ApplySettingsSection on broken overlay: %v", err)
+	}
+	raw, _ := s.Read(m.ID)
+	top, err := parseTopMap(raw)
+	if err != nil {
+		t.Fatalf("overlay still unparseable: %v", err)
+	}
+	if top["mixed-port"] != 7897 || len(top) != 1 {
+		t.Errorf("overlay = %v, want only mixed-port: 7897", top)
+	}
+}
+
+func TestApplySettingsSectionDeletesKey(t *testing.T) {
+	s, _ := testStore(t)
+	if err := s.ApplySettingsSection("tun", map[string]any{"enable": true}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if err := s.ApplySettingsSection("tun", nil); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	for _, m := range s.List() {
+		if !isSettingsOverlay(m) {
+			continue
+		}
+		raw, _ := s.Read(m.ID)
+		top, _ := parseTopMap(raw)
+		if len(top) != 0 {
+			t.Errorf("overlay = %v, want no keys after delete", top)
+		}
+	}
+}
+
+func TestComposeSettingsOverlayWinsOverOtherOverlays(t *testing.T) {
+	s, _ := testStore(t)
+	base, _ := s.Create(CreateInput{Name: "base", Content: "mixed-port: 7890\n"})
+	// A user-authored global merge overlay (created by hand in the dashboard).
+	s.Create(CreateInput{Name: "user merge", Type: TypeMerge, Content: "mixed-port: 2222\nsocks-port: 1111\n"})
+	if err := s.ApplySettingsSection("mixed-port", 7897); err != nil {
+		t.Fatalf("ApplySettingsSection: %v", err)
+	}
+	out, _, err := s.Compose(base.ID)
+	if err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	top, _ := parseTopMap(out)
+	if top["mixed-port"] != 7897 {
+		t.Errorf("mixed-port = %v, want 7897 (settings applied last)", top["mixed-port"])
+	}
+	if top["socks-port"] != 1111 {
+		t.Errorf("socks-port = %v, want 1111 (user overlay still applies)", top["socks-port"])
+	}
+}
+
+func TestComposeEmptySettingsOverlayKeepsBaseVerbatim(t *testing.T) {
+	s, _ := testStore(t)
+	content := "mixed-port: 7890\nrules:\n  - MATCH\n"
+	base, _ := s.Create(CreateInput{Name: "base", Content: content})
+	if err := s.ApplySettingsSection("tun", map[string]any{"enable": true}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if err := s.ApplySettingsSection("tun", nil); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	out, _, err := s.Compose(base.ID)
+	if err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	if out != content {
+		t.Errorf("composed = %q, want base verbatim %q", out, content)
+	}
+}
+
+func TestComposeIgnoresDuplicateSettingsOverlays(t *testing.T) {
+	s, _ := testStore(t)
+	base, _ := s.Create(CreateInput{Name: "base", Content: "mixed-port: 7890\n"})
+	s.Create(CreateInput{Name: SettingsOverlayName, Type: TypeMerge, ManagedBy: ManagedBySettings})
+	s.Create(CreateInput{Name: SettingsOverlayName + " copy", Type: TypeMerge, ManagedBy: ManagedBySettings})
+
+	if err := s.ApplySettingsSection("mixed-port", 7897); err != nil {
+		t.Fatalf("ApplySettingsSection with duplicates: %v", err)
+	}
+	out, _, err := s.Compose(base.ID)
+	if err != nil {
+		t.Fatalf("Compose with duplicates: %v", err)
+	}
+	top, _ := parseTopMap(out)
+	if top["mixed-port"] != 7897 {
+		t.Errorf("mixed-port = %v, want 7897 on the first (authoritative) overlay", top["mixed-port"])
+	}
+}
+
+func TestGetEffectiveSectionPrecedence(t *testing.T) {
+	s, _ := testStore(t)
+	base, _ := s.Create(CreateInput{Name: "base", Content: "tun:\n  enable: false\nport: 7890\n"})
+	if err := s.SetActive(base.ID); err != nil {
+		t.Fatalf("SetActive: %v", err)
+	}
+	if err := s.ApplySettingsSection("tun", map[string]any{"enable": true}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	// Settings layer wins for keys it owns.
+	v, err := s.GetEffectiveSection("tun")
+	if err != nil {
+		t.Fatalf("GetEffectiveSection(tun): %v", err)
+	}
+	if tun, _ := v.(map[string]any); tun["enable"] != true {
+		t.Errorf("tun = %v, want enable true from the settings overlay", v)
+	}
+	// Base value is the fallback for keys the overlay doesn't own.
+	v, err = s.GetEffectiveSection("port")
+	if err != nil {
+		t.Fatalf("GetEffectiveSection(port): %v", err)
+	}
+	if v != 7890 {
+		t.Errorf("port = %v, want 7890 from the active base", v)
+	}
+	// Unknown key: null, no error.
+	v, err = s.GetEffectiveSection("dns")
+	if err != nil || v != nil {
+		t.Errorf("GetEffectiveSection(dns) = (%v, %v), want (nil, nil)", v, err)
+	}
+}
+
+func TestGetEffectiveSectionWithoutActiveProfile(t *testing.T) {
+	s, _ := testStore(t)
+	if err := s.ApplySettingsSection("mixed-port", 7897); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	v, err := s.GetEffectiveSection("mixed-port")
+	if err != nil || v != 7897 {
+		t.Errorf("GetEffectiveSection = (%v, %v), want (7897, nil)", v, err)
+	}
+}
+
+func TestGetEffectiveSectionToleratesBrokenOverlay(t *testing.T) {
+	s, dir := testStore(t)
+	base, _ := s.Create(CreateInput{Name: "base", Content: "port: 7890\n"})
+	if err := s.SetActive(base.ID); err != nil {
+		t.Fatalf("SetActive: %v", err)
+	}
+	m, _ := s.Create(CreateInput{Name: SettingsOverlayName, Type: TypeMerge, ManagedBy: ManagedBySettings})
+	writeProfile(t, dir, m.ID, "a: 1\na: 2\n") // unparseable
+
+	v, err := s.GetEffectiveSection("port")
+	if err != nil || v != 7890 {
+		t.Errorf("GetEffectiveSection = (%v, %v), want (7890, nil) via base fallback", v, err)
 	}
 }

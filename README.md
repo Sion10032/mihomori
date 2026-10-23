@@ -155,7 +155,7 @@ nix run github:Sion10032/mihomori -- --version   # run the binary standalone
 | Variable        | Default                  | Description                                                                                                                          |
 | --------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `CONTROL_PORT`  | `8080`                  | Dashboard and API listen port                                                                                                        |
-| `MIXED_PORT`    | `7890`                  | mihomo mixed proxy port                                                                                                              |
+| `MIXED_PORT`    | `0`                     | mihomo mixed proxy port; 0 lets the dashboard own it, non-zero locks it (env wins)                                                   |
 | `DATA_DIR`      | `/data`                 | Configuration and data directory                                                                                                     |
 | `MIHOMO_BIN`    | `/usr/local/bin/mihomo` | mihomo kernel path                                                                                                                   |
 | `CONTROL_TOKEN` | _(empty)_               | Login page password, also used as Bearer Token for cross-origin access to `/api/control/*` (omit = no login page, `/api/control/*` open) |

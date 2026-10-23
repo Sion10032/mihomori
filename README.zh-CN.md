@@ -155,7 +155,7 @@ nix run github:Sion10032/mihomori -- --version   # 也可单独运行二进制
 | 变量            | 默认值                  | 说明                                                                                                                    |
 | --------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `CONTROL_PORT`  | `8080`                  | Dashboard 与 API 监听端口                                                                                               |
-| `MIXED_PORT`    | `7890`                  | mihomo 混合代理端口                                                                                                     |
+| `MIXED_PORT`    | `0`                     | mihomo 混合代理端口；0 表示由面板管理，非 0 时锁定并由环境变量优先                                                      |
 | `DATA_DIR`      | `/data`                 | 配置与数据目录                                                                                                          |
 | `MIHOMO_BIN`    | `/usr/local/bin/mihomo` | mihomo 内核路径                                                                                                         |
 | `CONTROL_TOKEN` | _(空)_                  | 登录页密码，也是跨源访问 `/api/control/*` 的 Bearer Token（不设 = 无登录页，`/api/control/*` 裸奔）                     |

@@ -71,7 +71,7 @@ RUN mkdir -p /data /app && \
 
 ENV CONTROL_PORT=8080 \
     CLASH_API_PORT=9090 \
-    MIXED_PORT=7890 \
+    MIXED_PORT=0 \
     DATA_DIR=/data \
     MIHOMO_BIN=/usr/local/bin/mihomo \
     UI_DIST=/ui

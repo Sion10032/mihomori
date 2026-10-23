@@ -55,6 +55,14 @@ func registerProfileRoutes(r chi.Router, deps *Router) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		// managedBy is program-owned metadata: refuse client-forged values so a
+		// caller can't mint a second read-only settings overlay.
+		if body.ManagedBy == profile.ManagedBySettings {
+			writeJSON(w, http.StatusForbidden, map[string]string{
+				"error": "mihomori settings overlay is read-only; change settings from the Config page",
+			})
+			return
+		}
 		m, err := p.Create(profile.CreateInput{
 			Name:          body.Name,
 			Content:       body.Content,
@@ -97,12 +105,13 @@ func registerProfileRoutes(r chi.Router, deps *Router) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		// managedBy === 'visual-editor' overlays are read-only via this route.
-		if m, err := findMeta(p, id); err == nil && m.ManagedBy == profile.ManagedByVisualEditor {
-			writeJSON(w, http.StatusForbidden, map[string]string{
-				"error": "managed visual editor overlays are read-only",
-			})
-			return
+		// Program-owned overlays (visual-editor, settings) are read-only via
+		// this route.
+		if m, err := findMeta(p, id); err == nil {
+			if reason := readOnlyReason(m); reason != "" {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": reason})
+				return
+			}
 		}
 		m, err := p.Update(id, profile.UpdateInput{
 			Name:           body.Name,
@@ -116,6 +125,15 @@ func registerProfileRoutes(r chi.Router, deps *Router) {
 
 	r.Delete("/api/control/profiles/{id}", func(w http.ResponseWriter, req *http.Request) {
 		id := chi.URLParam(req, "id")
+		// The settings overlay is program-owned: refuse deletion so a dashboard
+		// click can't silently drop persisted settings. Visual-editor overlays
+		// stay deletable (deleting clears the pending edit).
+		if m, err := findMeta(p, id); err == nil && m.ManagedBy == profile.ManagedBySettings {
+			writeJSON(w, http.StatusForbidden, map[string]string{
+				"error": "mihomori settings overlay is read-only; change settings from the Config page",
+			})
+			return
+		}
 		if err := p.Delete(id); err != nil {
 			respondProfileErr(w, err)
 			return
@@ -254,6 +272,18 @@ type ValidateError struct {
 }
 
 func (e *ValidateError) Error() string { return "profile validation failed" }
+
+// readOnlyReason returns a non-empty message when a profile's content is
+// program-owned and must not be edited through the profile routes.
+func readOnlyReason(m api.Meta) string {
+	switch m.ManagedBy {
+	case profile.ManagedByVisualEditor:
+		return "managed visual editor overlays are read-only"
+	case profile.ManagedBySettings:
+		return "mihomori settings overlay is read-only; change settings from the Config page"
+	}
+	return ""
+}
 
 // findMeta scans the index for one meta. We don't expose a public Get on the
 // store because list+filter is what the TS does and the index always fits in

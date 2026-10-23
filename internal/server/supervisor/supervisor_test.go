@@ -329,6 +329,28 @@ func TestInjectClashConfig(t *testing.T) {
 	}
 }
 
+func TestInjectClashConfigMixedPortOverridesUserValue(t *testing.T) {
+	bin := buildFakeMihomo(t)
+	opts := testOpts(t, bin)
+	writeConfig(t, opts.ActiveConfigPath, "mixed-port: 7897\n")
+	sup := New(opts)
+	defer sup.Dispose()
+
+	if err := sup.injectClashConfig(); err != nil {
+		t.Fatalf("injectClashConfig: %v", err)
+	}
+	content, err := os.ReadFile(opts.ActiveConfigPath)
+	if err != nil {
+		t.Fatalf("read active.yaml: %v", err)
+	}
+	if strings.Contains(string(content), "7897") {
+		t.Error("user mixed-port survived; an explicit MIXED_PORT must win")
+	}
+	if !strings.Contains(string(content), "mixed-port: 7890") {
+		t.Errorf("env mixed-port not injected:\n%s", content)
+	}
+}
+
 func killProc(t *testing.T, pid int) {
 	t.Helper()
 	_ = syscall.Kill(-pid, syscall.SIGKILL)
