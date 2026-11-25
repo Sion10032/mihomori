@@ -34,11 +34,11 @@ import (
 //   - "visual-config-editor" — the {} button is intentionally hidden
 //   - "system-proxy" / "kernel-version" / "tun" — desktop-only capabilities
 type Info struct {
-	HasAgent bool          `json:"hasAgent"`
-	Version  string        `json:"version"`
-	Platform PlatformInfo  `json:"platform"`
-	Kernel   KernelInfo    `json:"kernel"`
-	Features []string      `json:"features"`
+	HasAgent bool         `json:"hasAgent"`
+	Version  string       `json:"version"`
+	Platform PlatformInfo `json:"platform"`
+	Kernel   KernelInfo   `json:"kernel"`
+	Features []string     `json:"features"`
 }
 
 type PlatformInfo struct {
@@ -55,11 +55,14 @@ type KernelInfo struct {
 // Router bundles the dependencies every control handler needs. main.go
 // constructs one and passes it to chi mounting.
 type Router struct {
-	Supervisor    *supervisor.Supervisor
-	Profiles      *profile.Store // nil = Phase 1 stub (no /profiles/* routes)
-	Token         string         // "" = no auth (matches the in-process Electron case)
-	MihomoBin     string         // absolute path to the kernel binary (for info.kernel.path)
-	MihomoVersion string         // build-time pinned tag (for info.kernel.version fallback)
+	// Optional runtime application delegate; ordinary profiles use safeActivate.
+	ApplyProfile    func(id string, original func() (api.KernelState, error)) (api.KernelState, error)
+	ValidateProfile func(id string, draft profile.UpdateInput) (supervisor.ValidationResult, bool)
+	Supervisor      *supervisor.Supervisor
+	Profiles        *profile.Store // nil = Phase 1 stub (no /profiles/* routes)
+	Token           string         // "" = no auth (matches the in-process Electron case)
+	MihomoBin       string         // absolute path to the kernel binary (for info.kernel.path)
+	MihomoVersion   string         // build-time pinned tag (for info.kernel.version fallback)
 	// HomeDir is mihomo's -d working dir. Used to materialize validate
 	// candidate files alongside the live active.yaml so the validator resolves
 	// geo/cache paths the same way.

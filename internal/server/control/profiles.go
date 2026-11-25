@@ -3,17 +3,18 @@
 // stub (useful for spinning up the server before the store is ready).
 //
 // Endpoint set matches GO_SERVER_PLAN.md §4 Phase 2:
-//   GET    /profiles                       list
-//   POST   /profiles                       create (script → 501)
-//   GET    /profiles/{id}                  read meta + content
-//   PUT    /profiles/{id}                  update name/content/enabled/...
-//   DELETE /profiles/{id}                  remove (cascades scoped overlays)
-//   POST   /profiles/{id}/duplicate        copy content to a new local profile
-//   POST   /profiles/import                fetch URL with UA clash.meta
-//   POST   /profiles/{id}/refresh          re-fetch in place
-//   POST   /profiles/{id}/refresh-and-activate  refresh + activate + restart
-//   POST   /profiles/{id}/activate         compose + setActive + restart
-//   POST   /profiles/{id}/validate         501 until Phase 3 wires mihomo -t
+//
+//	GET    /profiles                       list
+//	POST   /profiles                       create (script → 501)
+//	GET    /profiles/{id}                  read meta + content
+//	PUT    /profiles/{id}                  update name/content/enabled/...
+//	DELETE /profiles/{id}                  remove (cascades scoped overlays)
+//	POST   /profiles/{id}/duplicate        copy content to a new local profile
+//	POST   /profiles/import                fetch URL with UA clash.meta
+//	POST   /profiles/{id}/refresh          re-fetch in place
+//	POST   /profiles/{id}/refresh-and-activate  refresh + activate + restart
+//	POST   /profiles/{id}/activate         compose + setActive + restart
+//	POST   /profiles/{id}/validate         501 until Phase 3 wires mihomo -t
 package control
 
 import (
@@ -96,6 +97,8 @@ func registerProfileRoutes(r chi.Router, deps *Router) {
 		id := chi.URLParam(req, "id")
 		var body struct {
 			Name           *string `json:"name"`
+			URL            *string `json:"url"`
+			UserAgent      *string `json:"userAgent"`
 			Content        *string `json:"content"`
 			Enabled        *bool   `json:"enabled"`
 			UpdateInterval *int    `json:"updateInterval"`
@@ -115,6 +118,8 @@ func registerProfileRoutes(r chi.Router, deps *Router) {
 		}
 		m, err := p.Update(id, profile.UpdateInput{
 			Name:           body.Name,
+			URL:            body.URL,
+			UserAgent:      body.UserAgent,
 			Content:        body.Content,
 			Enabled:        body.Enabled,
 			UpdateInterval: body.UpdateInterval,
@@ -209,6 +214,20 @@ func registerProfileRoutes(r chi.Router, deps *Router) {
 	// first-validate GEO download.
 	r.Post("/api/control/profiles/{id}/validate", func(w http.ResponseWriter, req *http.Request) {
 		id := chi.URLParam(req, "id")
+		if deps.ValidateProfile != nil {
+			var draft struct {
+				Content *string `json:"content"`
+				URL     *string `json:"url"`
+			}
+			if err := decodeJSON(req, &draft); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			if result, handled := deps.ValidateProfile(id, profile.UpdateInput{Content: draft.Content, URL: draft.URL}); handled {
+				writeJSON(w, http.StatusOK, result)
+				return
+			}
+		}
 		content, err := p.Read(id)
 		if err != nil {
 			respondProfileErr(w, err)
@@ -233,14 +252,21 @@ func registerProfileRoutes(r chi.Router, deps *Router) {
 // the running kernel across restarts (#2109):
 //
 //   - If there was a different prior active profile, re-activate it (re-compose
-//	     its overlays). This is the common case (user toggles between profiles).
+//     its overlays). This is the common case (user toggles between profiles).
 //   - If there was no prior active profile (first activation) OR re-activating
-//	     the same id, restore the pre-activation file from the .bak snapshot
-//			written by SetActive.
+//     the same id, restore the pre-activation file from the .bak snapshot
+//     written by SetActive.
 //
 // Either rollback path is best-effort — a failure must not mask the original
 // validation error, so we swallow rollback errors.
 func safeActivate(deps *Router, id string) (api.KernelState, error) {
+	if deps.ApplyProfile != nil {
+		return deps.ApplyProfile(id, func() (api.KernelState, error) { return activateOriginal(deps, id) })
+	}
+	return activateOriginal(deps, id)
+}
+
+func activateOriginal(deps *Router, id string) (api.KernelState, error) {
 	prevID := deps.Profiles.GetActiveID()
 	if err := deps.Profiles.SetActive(id); err != nil {
 		return api.KernelState{}, err
@@ -333,7 +359,7 @@ func respondProfileErr(w http.ResponseWriter, err error) {
 		var ve *ValidateError
 		if errors.As(err, &ve) {
 			writeJSON(w, http.StatusBadRequest, map[string]any{
-				"error":   "profile validation failed",
+				"error":  "profile validation failed",
 				"detail": ve.Message,
 			})
 			return

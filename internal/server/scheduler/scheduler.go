@@ -18,8 +18,11 @@ import (
 
 // Options configures the scheduler. ProfileStore + Supervisor are required.
 type Options struct {
-	Profiles *profile.Store
-	Supervisor *supervisor.Supervisor
+	// AppliedRefresh reports that an optional runtime layer already applied the
+	// Store's successful refresh. Nil keeps the original restart behavior.
+	AppliedRefresh func(id string) bool
+	Profiles       *profile.Store
+	Supervisor     *supervisor.Supervisor
 	// Tick defaults to 60s. Tests inject a smaller value.
 	Tick time.Duration
 	// Now returns Unix-millis; tests inject a fake clock so they can drive
@@ -29,10 +32,11 @@ type Options struct {
 
 // Scheduler arm/disarm is idempotent. At most one tick runs at a time.
 type Scheduler struct {
-	profiles *profile.Store
-	sup      *supervisor.Supervisor
-	tick     time.Duration
-	now      func() int64
+	appliedRefresh func(string) bool
+	profiles       *profile.Store
+	sup            *supervisor.Supervisor
+	tick           time.Duration
+	now            func() int64
 
 	mu      sync.Mutex
 	running atomic.Bool // separate from mu so tick() can read it without holding the lock
@@ -48,10 +52,11 @@ func New(opts Options) *Scheduler {
 		opts.Now = func() int64 { return time.Now().UnixMilli() }
 	}
 	return &Scheduler{
-		profiles: opts.Profiles,
-		sup:      opts.Supervisor,
-		tick:     opts.Tick,
-		now:      opts.Now,
+		appliedRefresh: opts.AppliedRefresh,
+		profiles:       opts.Profiles,
+		sup:            opts.Supervisor,
+		tick:           opts.Tick,
+		now:            opts.Now,
 	}
 }
 
@@ -123,6 +128,9 @@ func (s *Scheduler) tickOnce() {
 		// next tick retries. We do NOT trigger the active re-compose on failure
 		// (matches the TS onResult guard).
 		if _, err := s.profiles.Refresh(m.ID); err != nil {
+			continue
+		}
+		if s.appliedRefresh != nil && s.appliedRefresh(m.ID) {
 			continue
 		}
 		// If this profile is the active base, re-compose + restart so the new

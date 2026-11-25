@@ -20,6 +20,7 @@ import (
 	"mihomori/internal/server/clashproxy"
 	"mihomori/internal/server/config"
 	"mihomori/internal/server/control"
+	"mihomori/internal/server/manage"
 	"mihomori/internal/server/profile"
 	"mihomori/internal/server/scheduler"
 	"mihomori/internal/server/static"
@@ -73,19 +74,56 @@ func Run(opts Options) error {
 	// <DATA_DIR>/profiles. SetActive composes the chosen profile + its enabled
 	// merge overlays into active.yaml, which the supervisor then spawns mihomo
 	// against. Initial-state tolerates a missing dir (first run / empty volume).
-	profiles := profile.New(profile.Options{
+	var manager *manage.Manager
+	managedMode := os.Getenv("SUBSCRIPTION_MANAGER") == "true" || os.Getenv("SUBSCRIPTION_MANAGER") == "1"
+	profileOptions := profile.Options{
 		Dir:              env.ProfilesDir(),
 		ActiveConfigPath: env.ActiveConfigPath(),
-	})
+	}
+	if managedMode {
+		profileOptions.Fetcher = profile.NewHTTPFetcher(&http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 30 * time.Second})
+		profileOptions.OnChange = func(id string) {
+			if manager != nil {
+				manager.SourceChanged(id)
+			}
+		}
+		profileOptions.TransformBase = func(id, content string) (string, error) {
+			if manager != nil {
+				return manager.TransformBase(id, content)
+			}
+			return content, nil
+		}
+		profileOptions.ValidateSource = func(content string) error { return manage.ValidateSource(sup, env.DataDir, content) }
+	}
+	profiles := profile.New(profileOptions)
+
+	// Optional composition layer. Original profile/control/auth semantics and
+	// the upstream dashboard remain untouched when this module is disabled.
+	if managedMode {
+		var err error
+		manager, err = manage.New(manage.Options{Home: env.DataDir, Port: env.ControlPort, Token: env.ControlToken, MixedPort: env.MixedPort, Profiles: profiles, Supervisor: sup})
+		if err != nil {
+			log.Printf("[manage] initialization failed; retaining original runtime: %v", err)
+		} else {
+			if err = manager.PrepareBoot(); err != nil {
+				log.Printf("[manage] retaining last working runtime: %v", err)
+			}
+			manager.Start()
+		}
+	}
 
 	// Subscription auto-update scheduler: every 60s, refresh remote profiles
 	// whose updateInterval has elapsed. When the refreshed profile IS the
 	// active base, re-compose + restart so the new subscription takes effect
 	// immediately (matches the TS server's boot-kernel.ts plugin behavior).
-	sched := scheduler.New(scheduler.Options{
+	schedulerOptions := scheduler.Options{
 		Profiles:   profiles,
 		Supervisor: sup,
-	})
+	}
+	if manager != nil {
+		schedulerOptions.AppliedRefresh = manager.AppliedRefresh
+	}
+	sched := scheduler.New(schedulerOptions)
 	sched.Start()
 	log.Printf("[profiles] auto-update scheduler started (tick=60s)")
 
@@ -117,7 +155,7 @@ func Run(opts Options) error {
 	// control.New returns a chi.Router that registers full /api/control/*
 	// paths. ServeMux's subtree pattern forwards every /api/control/** request
 	// verbatim (r.URL.Path is unchanged), so chi's internal match works.
-	mux.Handle("/api/control/", control.New(control.Router{
+	controlOptions := control.Router{
 		Supervisor:       sup,
 		Profiles:         profiles,
 		Token:            env.ControlToken,
@@ -125,14 +163,38 @@ func Run(opts Options) error {
 		MihomoVersion:    env.MihomoVersion,
 		HomeDir:          env.DataDir,
 		ActiveConfigPath: env.ActiveConfigPath(),
-	}))
+	}
+	if manager != nil {
+		controlOptions.ApplyProfile = manager.ApplyProfile
+		controlOptions.ValidateProfile = manager.ValidateProfile
+	}
+	var controlHandler http.Handler = control.New(controlOptions)
+	if manager != nil {
+		controlHandler = manager.WrapControl(controlHandler)
+	}
+	mux.Handle("/api/control/", controlHandler)
+
+	if manager != nil {
+		managed := manager.Handler()
+		for _, path := range []string{"/manage", "/manage/"} {
+			mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, "/#/profiles", http.StatusTemporaryRedirect)
+			})
+		}
+		mux.Handle("/api/control/manage/", managed)
+		mux.Handle("/api/control/pool", managed)
+	}
 
 	// Clash proxy: stateFunc reads live supervisor state so a kernel restart
 	// (which re-injects external-controller/secret) is reflected immediately.
-	mux.Handle("/api/clash/", clashproxy.New(func() (upstream, secret string, running bool) {
+	clashHandler := clashproxy.New(func() (upstream, secret string, running bool) {
 		st := sup.State()
 		return st.ExternalController, st.Secret, st.Status == api.StatusRunning
-	}))
+	})
+	if manager != nil {
+		clashHandler = manager.WrapClash(clashHandler)
+	}
+	mux.Handle("/api/clash/", clashHandler)
 
 	// Static UI. SameOriginClashPath makes /config.js emit
 	//   defaultBackendURL = "http://<request host>/api/clash"
@@ -216,6 +278,9 @@ func Run(opts Options) error {
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("[server] graceful shutdown failed: %v", err)
+	}
+	if manager != nil {
+		manager.Stop()
 	}
 	sched.Stop()
 	if err := sup.Dispose(); err != nil {

@@ -86,6 +86,8 @@ type CreateInput struct {
 // "omit" from "set to zero value" — mirrors the TS `p?.field != null` checks.
 type UpdateInput struct {
 	Name           *string
+	URL            *string
+	UserAgent      *string
 	Content        *string
 	Enabled        *bool
 	UpdateInterval *int // minutes; 0 is meaningful (disables auto-update)
@@ -125,6 +127,9 @@ type Store struct {
 	fetcher          Fetcher
 	now              func() int64
 	idGen            func() string
+	onChange         func(string)
+	transformBase    func(string, string) (string, error)
+	validateSource   func(string) error
 	mu               sync.Mutex
 }
 
@@ -133,6 +138,12 @@ type Options struct {
 	Dir              string
 	ActiveConfigPath string
 	Fetcher          Fetcher // nil → defaultHTTPFetcher
+	// Optional extensions. OnChange runs after a successful commit AND unlock.
+	// TransformBase is pure and runs before the existing overlay pipeline; it
+	// must not call Store methods. Nil preserves the original profile behavior.
+	OnChange       func(id string)
+	TransformBase  func(id, content string) (string, error)
+	ValidateSource func(content string) error
 	// Now returns Unix-millis; tests inject a fake clock. Defaults to time.Now.
 	Now   func() int64
 	IDGen func() string // nil → uuid.NewString
@@ -155,6 +166,9 @@ func New(opts Options) *Store {
 		fetcher:          opts.Fetcher,
 		now:              opts.Now,
 		idGen:            opts.IDGen,
+		onChange:         opts.OnChange,
+		transformBase:    opts.TransformBase,
+		validateSource:   opts.ValidateSource,
 	}
 }
 
@@ -190,7 +204,12 @@ func (s *Store) Read(id string) (string, error) {
 //
 // type == "script" returns ErrScriptNotSupported (砍项 — the UI's "new script"
 // button surfaces this as a 501 toast).
-func (s *Store) Create(in CreateInput) (api.Meta, error) {
+func (s *Store) Create(in CreateInput) (out api.Meta, err error) {
+	defer func() {
+		if err == nil && s.onChange != nil {
+			s.onChange(out.ID)
+		}
+	}()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.createLocked(in)
@@ -253,7 +272,12 @@ func (s *Store) createLocked(in CreateInput) (api.Meta, error) {
 }
 
 // Update patches a profile's meta and optionally rewrites its content.
-func (s *Store) Update(id string, in UpdateInput) (api.Meta, error) {
+func (s *Store) Update(id string, in UpdateInput) (out api.Meta, err error) {
+	defer func() {
+		if err == nil && s.onChange != nil {
+			s.onChange(id)
+		}
+	}()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -269,8 +293,35 @@ func (s *Store) Update(id string, in UpdateInput) (api.Meta, error) {
 		return api.Meta{}, ErrNotFound
 	}
 	m := idx[pos]
+	if in.URL != nil || in.UserAgent != nil {
+		if m.Type != TypeRemote {
+			return api.Meta{}, ErrNotRemote
+		}
+		if in.URL != nil {
+			if strings.TrimSpace(*in.URL) == "" {
+				return api.Meta{}, errors.New("subscription URL required")
+			}
+			m.URL = strings.TrimSpace(*in.URL)
+		}
+		if in.UserAgent != nil {
+			m.UserAgent = *in.UserAgent
+		}
+		body, info, fetchErr := s.fetcher.Fetch(context.Background(), m.URL, m.UserAgent)
+		if fetchErr != nil {
+			return api.Meta{}, fetchErr
+		}
+		in.Content = &body
+		if info != nil {
+			m.SubscriptionInfo = info
+		}
+	}
 
 	if in.Content != nil {
+		if m.Type == TypeRemote && s.validateSource != nil {
+			if err := s.validateSource(*in.Content); err != nil {
+				return api.Meta{}, err
+			}
+		}
 		if err := s.atomicWrite(s.profilePath(id), *in.Content); err != nil {
 			return api.Meta{}, err
 		}
@@ -307,7 +358,12 @@ func (s *Store) Update(id string, in UpdateInput) (api.Meta, error) {
 
 // Delete removes a profile and any overlays scoped to it. If the deleted
 // profile was active, activeId is cleared.
-func (s *Store) Delete(id string) error {
+func (s *Store) Delete(id string) (err error) {
+	defer func() {
+		if err == nil && s.onChange != nil {
+			s.onChange(id)
+		}
+	}()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -370,7 +426,12 @@ func (s *Store) Delete(id string) error {
 // Duplicate copies a profile's content to a new local profile. The copy is
 // always type=local (matches TS) — duplicating a remote subscription would
 // suggest it auto-refreshes, but it has no URL.
-func (s *Store) Duplicate(id, name string) (api.Meta, error) {
+func (s *Store) Duplicate(id, name string) (out api.Meta, err error) {
+	defer func() {
+		if err == nil && s.onChange != nil {
+			s.onChange(out.ID)
+		}
+	}()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -406,7 +467,12 @@ func (s *Store) Duplicate(id, name string) (api.Meta, error) {
 
 // ImportFromURL fetches a remote subscription (UA: clash.meta) and stores it
 // as a new remote profile, parsing Subscription-Userinfo if present.
-func (s *Store) ImportFromURL(urlStr, name string) (api.Meta, error) {
+func (s *Store) ImportFromURL(urlStr, name string) (out api.Meta, err error) {
+	defer func() {
+		if err == nil && s.onChange != nil {
+			s.onChange(out.ID)
+		}
+	}()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -416,6 +482,11 @@ func (s *Store) ImportFromURL(urlStr, name string) (api.Meta, error) {
 	body, subInfo, err := s.fetcher.Fetch(context.Background(), urlStr, DefaultUA)
 	if err != nil {
 		return api.Meta{}, err
+	}
+	if s.validateSource != nil {
+		if err := s.validateSource(body); err != nil {
+			return api.Meta{}, err
+		}
 	}
 
 	n := name
@@ -446,7 +517,12 @@ func (s *Store) ImportFromURL(urlStr, name string) (api.Meta, error) {
 // Refresh re-fetches a remote subscription in place (same id). A successful
 // refresh also re-composes to detect visual-editor conflicts; the meta is
 // marked clean/conflicted accordingly.
-func (s *Store) Refresh(id string) (api.Meta, error) {
+func (s *Store) Refresh(id string) (out api.Meta, err error) {
+	defer func() {
+		if err == nil && s.onChange != nil {
+			s.onChange(id)
+		}
+	}()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -472,6 +548,11 @@ func (s *Store) Refresh(id string) (api.Meta, error) {
 	body, subInfo, err := s.fetcher.Fetch(context.Background(), m.URL, ua)
 	if err != nil {
 		return api.Meta{}, err
+	}
+	if s.validateSource != nil {
+		if err := s.validateSource(body); err != nil {
+			return api.Meta{}, err
+		}
 	}
 	if err := s.atomicWrite(s.profilePath(id), body); err != nil {
 		return api.Meta{}, err
@@ -854,6 +935,12 @@ func (s *Store) composeLocked(id string) (string, []api.Meta, error) {
 		return "", nil, err
 	}
 	baseContent := string(baseBytes)
+	if s.transformBase != nil {
+		baseContent, err = s.transformBase(id, baseContent)
+		if err != nil {
+			return "", nil, err
+		}
+	}
 
 	idx, _ := s.readIndexLocked()
 

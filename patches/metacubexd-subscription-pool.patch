@@ -1,0 +1,770 @@
+diff --git a/packages/ui/components/Modal.vue b/packages/ui/components/Modal.vue
+index f8750ae..ddd7eb2 100644
+--- a/packages/ui/components/Modal.vue
++++ b/packages/ui/components/Modal.vue
+@@ -4,11 +4,13 @@ import { IconX } from '@tabler/icons-vue'
+ interface Props {
+   title?: string
+   size?: 'md' | 'xl'
++  placement?: 'responsive' | 'center'
+   beforeClose?: () => boolean
+ }
+ 
+ const props = withDefaults(defineProps<Props>(), {
+   size: 'md',
++  placement: 'responsive',
+   beforeClose: undefined,
+ })
+ 
+@@ -47,6 +49,9 @@ function open() {
+   cancelCloseTimer()
+   dialogRef.value?.showModal()
+   isRendered.value = true
++  nextTick(() => {
++    dialogRef.value?.querySelector<HTMLElement>('[autofocus]')?.focus()
++  })
+   // Next frame: flip to the open state so the entrance transition runs.
+   requestAnimationFrame(() => {
+     isOpen.value = true
+@@ -83,7 +88,10 @@ defineExpose({ open, close })
+ <template>
+   <dialog
+     ref="dialogRef"
+-    class="modal modal-bottom sm:modal-middle"
++    class="modal"
++    :class="
++      placement === 'center' ? 'modal-middle' : 'modal-bottom sm:modal-middle'
++    "
+     aria-modal="true"
+     :aria-labelledby="title ? titleId : undefined"
+     :style="{
+diff --git a/packages/ui/composables/__tests__/useProfiles.spec.ts b/packages/ui/composables/__tests__/useProfiles.spec.ts
+index d14d9b8..735f9dc 100644
+--- a/packages/ui/composables/__tests__/useProfiles.spec.ts
++++ b/packages/ui/composables/__tests__/useProfiles.spec.ts
+@@ -9,7 +9,13 @@ const { invalidateQueries } = vi.hoisted(() => ({
+ vi.mock('@tanstack/vue-query', () => ({
+   useQueryClient: () => ({ invalidateQueries }),
+ }))
+-vi.mock('../useQueries', () => ({ queryKeys: { config: ['config'] } }))
++vi.mock('../useQueries', () => ({
++  queryKeys: {
++    config: ['config'],
++    proxies: ['proxies'],
++    proxyProviders: ['proxy-providers'],
++  },
++}))
+ 
+ const api = {
+   listProfiles: vi.fn(),
+@@ -144,6 +150,46 @@ describe('composables/useProfiles', () => {
+     expect(api.listProfiles).toHaveBeenCalled()
+   })
+ 
++  it('pooled import refreshes native queries and does not close live connections', async () => {
++    const source = { ...meta('a'), type: 'remote' as const, pooled: true }
++    api.listProfiles.mockResolvedValue([source])
++    api.activateProfile.mockResolvedValue({ status: 'running' })
++    const p = useProfiles()
++    await p.importUrl('https://example.test/a', 'a')
++    expect(invalidateQueries).toHaveBeenCalledWith({
++      queryKey: ['proxy-providers'],
++    })
++    await p.activate('a')
++    expect(closeAllConnectionsMock).not.toHaveBeenCalled()
++  })
++
++  it('pool URL edits omit stale content and extend only their request timeout', async () => {
++    const p = useProfiles()
++    await p.save('a', undefined, {
++      name: 'source',
++      url: 'https://example.test/new',
++    })
++    expect(api.updateProfile).toHaveBeenCalledWith(
++      'a',
++      {
++        name: 'source',
++        url: 'https://example.test/new',
++      },
++      { timeout: 120000 },
++    )
++    expect(api.listProfiles).toHaveBeenCalled()
++  })
++
++  it('draft validation does not save the source', async () => {
++    api.validateProfile.mockResolvedValue({ valid: true })
++    const p = useProfiles()
++    await p.validate('a', { url: 'https://example.test/draft' })
++    expect(api.validateProfile).toHaveBeenCalledWith('a', {
++      url: 'https://example.test/draft',
++    })
++    expect(api.updateProfile).not.toHaveBeenCalled()
++  })
++
+   it('setUpdateInterval() persists minutes then re-lists (#2107)', async () => {
+     api.updateProfile.mockResolvedValue(meta('a'))
+     const p = useProfiles()
+diff --git a/packages/ui/composables/useControlApi.ts b/packages/ui/composables/useControlApi.ts
+index 0c683d2..7eacb78 100644
+--- a/packages/ui/composables/useControlApi.ts
++++ b/packages/ui/composables/useControlApi.ts
+@@ -71,7 +71,22 @@ export function useControlApi() {
+   if (token) headers.Authorization = `Bearer ${token}`
+   // ky v2: use `prefix` (prefixUrl was renamed in v2). All method paths below
+   // are passed WITHOUT a leading slash so ky joins them cleanly.
+-  const client = ky.create({ prefix: base, headers, timeout: 15000 })
++  const client = ky.create({
++    prefix: base,
++    headers,
++    timeout: 15000,
++    hooks: {
++      afterResponse: [
++        ({ response }) => {
++          if (
++            response.headers.get('X-Mihomori-Pool-Pending') === 'true' &&
++            typeof window !== 'undefined'
++          )
++            window.dispatchEvent(new CustomEvent('mihomori:pool-pending'))
++        },
++      ],
++    },
++  })
+ 
+   return {
+     base,
+@@ -110,11 +125,17 @@ export function useControlApi() {
+       body: {
+         name?: string
+         content?: string
++        url?: string
++        userAgent?: string
+         enabled?: boolean
+         // minutes; remote-only. 0 disables auto-update.
+         updateInterval?: number
+       },
+-    ) => client.put(`profiles/${id}`, { json: body }).json<ProfileMeta>(),
++      options: { timeout?: number } = {},
++    ) =>
++      client
++        .put(`profiles/${id}`, { json: body, ...options })
++        .json<ProfileMeta>(),
+     // DELETE returns 204 No Content — there is no body to parse. Chaining
+     // .json() on an empty 204 throws "Unexpected end of JSON input" and makes a
+     // successful delete look like a failure (#2110).
+@@ -156,9 +177,10 @@ export function useControlApi() {
+           timeout: PROFILE_REFRESH_AND_ACTIVATE_TIMEOUT,
+         })
+         .json<{ meta: ProfileMeta; kernel: KernelState }>(),
+-    validateProfile: (id: string) =>
++    validateProfile: (id: string, draft?: { content?: string; url?: string }) =>
+       client
+         .post(`profiles/${id}/validate`, {
++          ...(draft ? { json: draft } : {}),
+           timeout: PROFILE_VALIDATE_TIMEOUT,
+         })
+         .json<ValidateResult>(),
+diff --git a/packages/ui/composables/useProfiles.ts b/packages/ui/composables/useProfiles.ts
+index 19569a8..0a2f703 100644
+--- a/packages/ui/composables/useProfiles.ts
++++ b/packages/ui/composables/useProfiles.ts
+@@ -52,7 +52,15 @@ export function useProfiles() {
+   const refresh = async () => {
+     loading.value = true
+     try {
++      const hadPooled = profiles.value.some((p) => p.pooled)
+       profiles.value = await api.listProfiles()
++      if (hadPooled || profiles.value.some((p) => p.pooled)) {
++        await Promise.all([
++          queryClient.invalidateQueries({ queryKey: queryKeys.proxies }),
++          queryClient.invalidateQueries({ queryKey: queryKeys.proxyProviders }),
++          queryClient.invalidateQueries({ queryKey: queryKeys.config }),
++        ])
++      }
+       // Sync the active marker from the source of truth so activation done
+       // outside this page (tray, AIO scheduler, a prior session) is reflected.
+       const active = profiles.value.find(
+@@ -139,8 +147,14 @@ export function useProfiles() {
+       return false
+     }
+   }
+-  const save = async (id: string, content: string) => {
+-    await api.updateProfile(id, { content })
++  const save = async (
++    id: string,
++    content: string | undefined,
++    metadata: { name?: string; url?: string; userAgent?: string } = {},
++  ) => {
++    const body = { ...metadata, ...(content === undefined ? {} : { content }) }
++    if (metadata.url === undefined) await api.updateProfile(id, body)
++    else await api.updateProfile(id, body, { timeout: 120000 })
+     await refresh()
+   }
+   // Persist a remote profile's auto-update interval (minutes; 0 disables). The
+@@ -151,8 +165,11 @@ export function useProfiles() {
+     await refresh()
+   }
+   const load = (id: string): Promise<ProfileDetail> => api.getProfile(id)
+-  const validate = (id: string): Promise<ValidateResult> =>
+-    api.validateProfile(id)
++  const validate = (
++    id: string,
++    draft?: { content?: string; url?: string },
++  ): Promise<ValidateResult> =>
++    draft ? api.validateProfile(id, draft) : api.validateProfile(id)
+   const activate = async (id: string): Promise<KernelState> => {
+     const state = await api.activateProfile(id)
+     activeBaseId.value = id
+@@ -164,7 +181,8 @@ export function useProfiles() {
+     // A profile switch can re-route any connection, so drop the existing ones
+     // (when the user opted into autoCloseConns) for the change to take effect
+     // immediately instead of waiting for live connections to die naturally.
+-    await proxiesStore.closeAllConnections()
++    if (!profiles.value.find((p) => p.id === id)?.pooled)
++      await proxiesStore.closeAllConnections()
+     return state
+   }
+ 
+diff --git a/packages/ui/i18n/locales/en.json b/packages/ui/i18n/locales/en.json
+index b1a99ee..1ae3224 100644
+--- a/packages/ui/i18n/locales/en.json
++++ b/packages/ui/i18n/locales/en.json
+@@ -499,6 +499,9 @@
+   "profilesActivate": "Activate",
+   "profilesValidate": "Validate",
+   "profilesActive": "Active",
++  "profilesPooled": "Participating in pool",
++  "profilesPoolHelp": "All subscriptions are used together. Import, edit, refresh or delete a source to update the pool automatically; fixed groups stay unchanged.",
++  "profilesPoolUrlChanged": "Saving a changed URL fetches its nodes. If fetching fails, the existing source and its cached nodes are retained.",
+   "profilesName": "Name",
+   "profilesUrl": "Subscription URL",
+   "profilesSave": "Save",
+@@ -651,5 +654,6 @@
+   "visualEditorDiagnostics": "Configuration diagnostics",
+   "visualEditorManaged": "Managed",
+   "quality": "Quality",
+-  "sortDefault": "Default"
++  "sortDefault": "Default",
++  "profilesPoolApplyPending": "Subscription saved; pool application is pending. The last working configuration remains active."
+ }
+diff --git a/packages/ui/i18n/locales/fa.json b/packages/ui/i18n/locales/fa.json
+index a7f6774..98459e0 100644
+--- a/packages/ui/i18n/locales/fa.json
++++ b/packages/ui/i18n/locales/fa.json
+@@ -499,6 +499,9 @@
+   "profilesActivate": "فعال‌سازی",
+   "profilesValidate": "اعتبارسنجی",
+   "profilesActive": "فعال",
++  "profilesPooled": "Participating in pool",
++  "profilesPoolHelp": "All subscriptions are used together. Import, edit, refresh or delete a source to update the pool automatically; fixed groups stay unchanged.",
++  "profilesPoolUrlChanged": "Saving a changed URL fetches its nodes. If fetching fails, the existing source and its cached nodes are retained.",
+   "profilesName": "نام",
+   "profilesUrl": "URL اشتراک",
+   "profilesSave": "ذخیره",
+@@ -651,5 +654,6 @@
+   "visualEditorDiagnostics": "عیب‌یابی پیکربندی",
+   "visualEditorManaged": "مدیریت‌شده",
+   "quality": "کیفیت",
+-  "sortDefault": "پیش‌فرض"
++  "sortDefault": "پیش‌فرض",
++  "profilesPoolApplyPending": "Subscription saved; pool application is pending. The last working configuration remains active."
+ }
+diff --git a/packages/ui/i18n/locales/fr.json b/packages/ui/i18n/locales/fr.json
+index 097b33e..4459cf3 100644
+--- a/packages/ui/i18n/locales/fr.json
++++ b/packages/ui/i18n/locales/fr.json
+@@ -499,6 +499,9 @@
+   "profilesActivate": "Activer",
+   "profilesValidate": "Valider",
+   "profilesActive": "Actif",
++  "profilesPooled": "Participating in pool",
++  "profilesPoolHelp": "All subscriptions are used together. Import, edit, refresh or delete a source to update the pool automatically; fixed groups stay unchanged.",
++  "profilesPoolUrlChanged": "Saving a changed URL fetches its nodes. If fetching fails, the existing source and its cached nodes are retained.",
+   "profilesName": "Nom",
+   "profilesUrl": "URL d'abonnement",
+   "profilesSave": "Enregistrer",
+@@ -651,5 +654,6 @@
+   "visualEditorDiagnostics": "Diagnostic de la configuration",
+   "visualEditorManaged": "Géré",
+   "quality": "Qualité",
+-  "sortDefault": "Défaut"
++  "sortDefault": "Défaut",
++  "profilesPoolApplyPending": "Subscription saved; pool application is pending. The last working configuration remains active."
+ }
+diff --git a/packages/ui/i18n/locales/ja.json b/packages/ui/i18n/locales/ja.json
+index 2d18ba8..f176397 100644
+--- a/packages/ui/i18n/locales/ja.json
++++ b/packages/ui/i18n/locales/ja.json
+@@ -499,6 +499,9 @@
+   "profilesActivate": "有効化",
+   "profilesValidate": "検証",
+   "profilesActive": "アクティブ",
++  "profilesPooled": "Participating in pool",
++  "profilesPoolHelp": "All subscriptions are used together. Import, edit, refresh or delete a source to update the pool automatically; fixed groups stay unchanged.",
++  "profilesPoolUrlChanged": "Saving a changed URL fetches its nodes. If fetching fails, the existing source and its cached nodes are retained.",
+   "profilesName": "名前",
+   "profilesUrl": "サブスクリプション URL",
+   "profilesSave": "保存",
+@@ -651,5 +654,6 @@
+   "visualEditorDiagnostics": "設定の診断",
+   "visualEditorManaged": "管理対象",
+   "quality": "品質",
+-  "sortDefault": "デフォルト"
++  "sortDefault": "デフォルト",
++  "profilesPoolApplyPending": "Subscription saved; pool application is pending. The last working configuration remains active."
+ }
+diff --git a/packages/ui/i18n/locales/ko.json b/packages/ui/i18n/locales/ko.json
+index 56b920f..ef7eb76 100644
+--- a/packages/ui/i18n/locales/ko.json
++++ b/packages/ui/i18n/locales/ko.json
+@@ -499,6 +499,9 @@
+   "profilesActivate": "활성화",
+   "profilesValidate": "검증",
+   "profilesActive": "활성",
++  "profilesPooled": "Participating in pool",
++  "profilesPoolHelp": "All subscriptions are used together. Import, edit, refresh or delete a source to update the pool automatically; fixed groups stay unchanged.",
++  "profilesPoolUrlChanged": "Saving a changed URL fetches its nodes. If fetching fails, the existing source and its cached nodes are retained.",
+   "profilesName": "이름",
+   "profilesUrl": "구독 URL",
+   "profilesSave": "저장",
+@@ -651,5 +654,6 @@
+   "visualEditorDiagnostics": "설정 진단",
+   "visualEditorManaged": "관리됨",
+   "quality": "품질",
+-  "sortDefault": "기본"
++  "sortDefault": "기본",
++  "profilesPoolApplyPending": "Subscription saved; pool application is pending. The last working configuration remains active."
+ }
+diff --git a/packages/ui/i18n/locales/ru.json b/packages/ui/i18n/locales/ru.json
+index 4a6cb23..49ad4e7 100644
+--- a/packages/ui/i18n/locales/ru.json
++++ b/packages/ui/i18n/locales/ru.json
+@@ -448,6 +448,9 @@
+   "profilesActivate": "Активировать",
+   "profilesValidate": "Проверить",
+   "profilesActive": "Активный",
++  "profilesPooled": "Participating in pool",
++  "profilesPoolHelp": "All subscriptions are used together. Import, edit, refresh or delete a source to update the pool automatically; fixed groups stay unchanged.",
++  "profilesPoolUrlChanged": "Saving a changed URL fetches its nodes. If fetching fails, the existing source and its cached nodes are retained.",
+   "profilesName": "Имя",
+   "profilesUrl": "URL подписки",
+   "profilesSave": "Сохранить",
+@@ -595,5 +598,6 @@
+   "visualEditorDiagnostics": "Диагностика конфигурации",
+   "visualEditorManaged": "Управляемый",
+   "quality": "Качество",
+-  "sortDefault": "По умолчанию"
++  "sortDefault": "По умолчанию",
++  "profilesPoolApplyPending": "Subscription saved; pool application is pending. The last working configuration remains active."
+ }
+diff --git a/packages/ui/i18n/locales/zh.json b/packages/ui/i18n/locales/zh.json
+index 8b7fc6c..8624489 100644
+--- a/packages/ui/i18n/locales/zh.json
++++ b/packages/ui/i18n/locales/zh.json
+@@ -499,6 +499,9 @@
+   "profilesActivate": "激活",
+   "profilesValidate": "校验",
+   "profilesActive": "当前激活",
++  "profilesPooled": "已参与订阅池",
++  "profilesPoolHelp": "所有订阅共同生效。导入、编辑、刷新或删除来源后，节点池自动更新，固定分组保持不变。",
++  "profilesPoolUrlChanged": "保存新链接时会重新获取节点；获取失败则保留原链接和缓存节点。",
+   "profilesName": "名称",
+   "profilesUrl": "订阅链接",
+   "profilesSave": "保存",
+@@ -651,5 +654,6 @@
+   "visualEditorDiagnostics": "配置诊断",
+   "visualEditorManaged": "托管",
+   "quality": "质量",
+-  "sortDefault": "默认"
++  "sortDefault": "默认",
++  "profilesPoolApplyPending": "订阅已保存，但尚未应用；当前继续使用上一次有效配置。"
+ }
+diff --git a/packages/ui/pages/profiles.vue b/packages/ui/pages/profiles.vue
+index c0d9095..67b6561 100644
+--- a/packages/ui/pages/profiles.vue
++++ b/packages/ui/pages/profiles.vue
+@@ -18,6 +18,7 @@ import { controlErrorMessage } from '~/utils/controlError'
+ const { t, locale } = useI18n()
+ const router = useRouter()
+ const { hasFeature, ready } = useControlInfo()
++const poolMode = computed(() => hasFeature('subscription-pool'))
+ const kernelStore = useKernelStore()
+ const { isShareable, qrSvg } = useShareQr()
+ const { copy: copyToClipboard } = useClipboard()
+@@ -55,6 +56,12 @@ const {
+   activate,
+ } = useProfiles()
+ 
++const pooledActive = computed(
++  () =>
++    poolMode.value &&
++    profiles.value.some((p) => p.pooled && p.id === activeBaseId.value),
++)
++
+ // Per-action loading: each button reflects only its own in-flight state (keyed
+ // `action:id`) instead of one global `busy` flag greying every control.
+ const { isBusy, run: withBusy } = useBusyKeys()
+@@ -64,6 +71,7 @@ const newMergeName = ref('')
+ const newScriptName = ref('')
+ 
+ const editingId = ref<string | null>(null)
++let editorSession = 0
+ // Name + kind of the profile currently open in the editor, for the editor's
+ // header (so it is clear WHICH profile is being edited).
+ const editingName = ref('')
+@@ -80,18 +88,31 @@ const editingMerge = ref(false)
+ // language and routes save through saveScript (which recomposes).
+ const editingScript = ref(false)
+ const editingText = ref('')
++const editingRemote = ref(false)
++const editingUrl = ref('')
++const originalEditingUrl = ref('')
++const sourceUrlChanged = computed(
++  () =>
++    poolMode.value &&
++    editingRemote.value &&
++    editingUrl.value.trim() !== originalEditingUrl.value,
++)
+ const validationMessage = ref('')
+ const validationOk = ref<boolean | null>(null)
+ 
+-onMounted(() => {
+-  if (hasFeature('profiles'))
+-    refresh().catch((err) => {
+-      console.error('[profiles] initial load failed', err)
+-      toast.error(t('profilesActionFailed'), {
+-        description: controlErrorMessage(err),
++watch(
++  ready,
++  (isReady) => {
++    if (isReady && hasFeature('profiles'))
++      refresh().catch((err) => {
++        console.error('[profiles] initial load failed', err)
++        toast.error(t('profilesActionFailed'), {
++          description: controlErrorMessage(err),
++        })
+       })
+-    })
+-})
++  },
++  { immediate: true },
++)
+ 
+ // Re-sync the active marker + list when a profile is activated from outside the
+ // SPA (tray submenu, AIO scheduler). desktop-sync invalidates vue-query caches,
+@@ -103,6 +124,16 @@ onControlInvalidate(() => {
+ 
+ // Uniform failure feedback for the actions whose composable methods rethrow
+ // (the merge/script setters self-toast and never reach here).
++const notifyPendingPool = () => {
++  if (poolMode.value) toast.warning(t('profilesPoolApplyPending'))
++}
++onMounted(() =>
++  window.addEventListener('mihomori:pool-pending', notifyPendingPool),
++)
++onUnmounted(() =>
++  window.removeEventListener('mihomori:pool-pending', notifyPendingPool),
++)
++
+ const notifyError = (e: unknown) =>
+   toast.error(t('profilesActionFailed'), {
+     description: controlErrorMessage(e),
+@@ -121,13 +152,18 @@ const openEditor = (
+   kind: 'base' | 'merge' | 'script' = 'base',
+ ) =>
+   withBusy(`edit:${id}`, async () => {
++    const session = ++editorSession
+     try {
+       const detail = await load(id)
++      if (session !== editorSession) return
+       editingText.value = detail.content
+       editingId.value = id
+       editingName.value = name
+       editingMerge.value = kind === 'merge'
+       editingScript.value = kind === 'script'
++      editingRemote.value = kind === 'base' && detail.meta.type === 'remote'
++      editingUrl.value = detail.meta.url ?? ''
++      originalEditingUrl.value = editingUrl.value.trim()
+       validationMessage.value = ''
+       validationOk.value = null
+       // The editor mounts at the bottom of the page; pull it into view AND move
+@@ -145,11 +181,43 @@ const openEditor = (
+   })
+ 
+ const closeEditor = () => {
++  editorSession++
+   editingId.value = null
+   editingName.value = ''
+   editingMerge.value = false
+   editingScript.value = false
+   editingText.value = ''
++  editingRemote.value = false
++  editingUrl.value = ''
++  originalEditingUrl.value = ''
++}
++
++const saveEditorContent = async (id: string) => {
++  const session = editorSession
++  if (
++    !poolMode.value ||
++    !editingRemote.value ||
++    editingMerge.value ||
++    editingScript.value
++  ) {
++    await save(id, editingText.value)
++    return
++  }
++  const urlChanged = sourceUrlChanged.value
++  await save(id, urlChanged ? undefined : editingText.value, {
++    name: editingName.value.trim(),
++    ...(urlChanged ? { url: editingUrl.value.trim() } : {}),
++  })
++  if (session !== editorSession || editingId.value !== id) return
++  validationMessage.value = ''
++  validationOk.value = null
++  if (urlChanged) {
++    const detail = await load(id)
++    if (session !== editorSession || editingId.value !== id) return
++    editingText.value = detail.content
++    editingUrl.value = detail.meta.url ?? ''
++    originalEditingUrl.value = editingUrl.value.trim()
++  }
+ }
+ 
+ const onSave = () => {
+@@ -165,7 +233,7 @@ const onSave = () => {
+       } else if (editingMerge.value) {
+         await saveMerge(id, editingText.value)
+       } else {
+-        await save(id, editingText.value)
++        await saveEditorContent(id)
+       }
+     } catch (e) {
+       notifyError(e)
+@@ -176,16 +244,31 @@ const onSave = () => {
+ const onValidate = () => {
+   if (!editingId.value) return
+   const id = editingId.value
++  const session = editorSession
+   return withBusy('editor-validate', async () => {
+     try {
+-      await save(id, editingText.value)
+-      const res = await validate(id)
++      const previewSource =
++        poolMode.value &&
++        editingRemote.value &&
++        !editingMerge.value &&
++        !editingScript.value
++      if (!previewSource) await saveEditorContent(id)
++      const res = await validate(
++        id,
++        previewSource
++          ? sourceUrlChanged.value
++            ? { url: editingUrl.value.trim() }
++            : { content: editingText.value }
++          : undefined,
++      )
++      if (session !== editorSession || editingId.value !== id) return
+       validationOk.value = res.valid
+       validationMessage.value = res.valid
+         ? t('profilesValidationOk')
+         : res.message
+     } catch (e) {
+       // Never leave a prior run's verdict on screen after a failed save/validate.
++      if (session !== editorSession || editingId.value !== id) return
+       validationOk.value = null
+       validationMessage.value = ''
+       notifyError(e)
+@@ -300,20 +383,44 @@ const onDuplicate = (p: ProfileMeta) =>
+     }
+   })
+ 
++const deleteModalRef = ref<{
++  open: () => void
++  close: (force?: boolean) => void
++} | null>(null)
++const deleteTarget = ref<{ id: string; message: string } | null>(null)
++const deleteClosing = ref(false)
++const deleting = computed(
++  () =>
++    deleteClosing.value ||
++    (deleteTarget.value ? isBusy(`delete:${deleteTarget.value.id}`) : false),
++)
++
++const resetDeleteTarget = () => {
++  deleteTarget.value = null
++  deleteClosing.value = false
++}
++
+ const onRemove = (id: string) => {
+-  // Deletion is irreversible (recovery = re-import + re-fetch); deleting the
+-  // ACTIVE base also tears down the running config — warn harder there.
+-  const name =
+-    profiles.value.find((p) => p.id === id)?.name ?? t('profilesName')
++  const target = profiles.value.find((p) => p.id === id)
++  if (!target || deleting.value) return
++  const name = target.name || t('profilesName')
+   const message =
+-    id === activeBaseId.value
++    id === activeBaseId.value && !(poolMode.value && target.pooled)
+       ? t('profilesDeleteActiveConfirm', { name })
+       : t('profilesDeleteConfirm', { name })
+-  if (!confirm(message)) return
++  deleteTarget.value = { id, message }
++  deleteModalRef.value?.open()
++}
++
++const confirmRemove = () => {
++  if (!deleteTarget.value || deleting.value) return
++  const { id } = deleteTarget.value
+   return withBusy(`delete:${id}`, async () => {
+     try {
+       await remove(id)
+       if (editingId.value === id) closeEditor()
++      deleteClosing.value = true
++      deleteModalRef.value?.close(true)
+       // Deleting the LAST base profile must re-surface the onboarding banners/wizard.
+       await useProfileStatus().refresh()
+     } catch (e) {
+@@ -354,6 +461,12 @@ const onCopyShareUrl = async () => {
+     </div>
+ 
+     <template v-else>
++      <p
++        v-if="poolMode"
++        class="rounded-xl border border-primary/20 bg-primary/5 p-4"
++      >
++        {{ t('profilesPoolHelp') }}
++      </p>
+       <!-- Prominent subscription import (shared with the first-run wizard) -->
+       <ProfileImportHero @imported="onHeroImported" />
+ 
+@@ -377,7 +490,7 @@ const onCopyShareUrl = async () => {
+           :key="p.id"
+           class="rounded-xl border bg-base-200 p-4"
+           :class="
+-            p.id === activeBaseId
++            p.id === activeBaseId || (poolMode && p.pooled)
+               ? 'border-success/40'
+               : 'border-base-content/10'
+           "
+@@ -387,7 +500,13 @@ const onCopyShareUrl = async () => {
+             <span class="min-w-0 truncate font-semibold">{{ p.name }}</span>
+             <div class="flex shrink-0 items-center gap-1.5">
+               <span
+-                v-if="p.id === activeBaseId"
++                v-if="poolMode && p.pooled"
++                class="badge badge-sm badge-success"
++              >
++                {{ t('profilesPooled') }}
++              </span>
++              <span
++                v-else-if="p.id === activeBaseId"
+                 class="badge badge-sm badge-success"
+               >
+                 {{ t('profilesActive') }}
+@@ -472,7 +591,7 @@ const onCopyShareUrl = async () => {
+               {{ t('profilesRefresh') }}
+             </Button>
+             <Button
+-              v-if="p.type === 'remote'"
++              v-if="p.type === 'remote' && !(p.pooled && pooledActive)"
+               class="btn-success btn-xs"
+               :icon="IconRefresh"
+               :loading="isBusy(`refresh-apply:${p.id}`)"
+@@ -489,7 +608,7 @@ const onCopyShareUrl = async () => {
+               {{ t('profilesDuplicate') }}
+             </Button>
+             <Button
+-              v-if="p.id !== activeBaseId"
++              v-if="p.id !== activeBaseId && !(p.pooled && pooledActive)"
+               class="btn-success btn-xs"
+               :icon="IconPlayerPlay"
+               :loading="isBusy(`activate:${p.id}`)"
+@@ -753,9 +872,34 @@ const onCopyShareUrl = async () => {
+           </span>
+         </div>
+ 
++        <div
++          v-if="poolMode && !editingMerge && !editingScript"
++          class="mb-3 grid gap-3"
++        >
++          <label class="flex flex-col gap-1 text-sm">
++            <span>{{ t('profilesName') }}</span>
++            <input
++              v-model="editingName"
++              class="input-bordered input w-full input-sm"
++            />
++          </label>
++          <label v-if="editingRemote" class="flex flex-col gap-1 text-sm">
++            <span>{{ t('profilesUrl') }}</span>
++            <input
++              v-model="editingUrl"
++              type="url"
++              autocomplete="off"
++              class="input-bordered input w-full input-sm"
++            />
++          </label>
++          <p v-if="sourceUrlChanged" class="text-sm text-base-content/70">
++            {{ t('profilesPoolUrlChanged') }}
++          </p>
++        </div>
+         <ClientOnly>
+           <MonacoYamlEditor
+             v-model="editingText"
++            :read-only="sourceUrlChanged"
+             :language="editingScript ? 'javascript' : 'yaml'"
+           />
+         </ClientOnly>
+@@ -800,6 +944,34 @@ const onCopyShareUrl = async () => {
+       </div>
+     </template>
+ 
++    <Modal
++      ref="deleteModalRef"
++      :title="t('profilesDelete')"
++      placement="center"
++      :before-close="() => !deleting"
++      @close="resetDeleteTarget"
++    >
++      <template #icon>
++        <IconTrash />
++      </template>
++      <p class="text-sm leading-relaxed text-base-content/80">
++        {{ deleteTarget?.message }}
++      </p>
++      <template #actions>
++        <Button
++          class="btn-ghost"
++          autofocus
++          :disabled="deleting"
++          @click="deleteModalRef?.close()"
++        >
++          {{ t('cancel') }}
++        </Button>
++        <Button class="btn-error" :loading="deleting" @click="confirmRemove">
++          {{ t('profilesDelete') }}
++        </Button>
++      </template>
++    </Modal>
++
+     <!-- Subscription QR share dialog (remote profiles only). -->
+     <Modal ref="shareModalRef" :title="t('profilesShareTitle')">
+       <template #icon>
+diff --git a/packages/ui/types/control.ts b/packages/ui/types/control.ts
+index 5f4be21..0429e8d 100644
+--- a/packages/ui/types/control.ts
++++ b/packages/ui/types/control.ts
+@@ -47,11 +47,13 @@ export interface ProfileMeta {
+   // active one in state.json. Lets the profiles page persistently mark the
+   // active card instead of losing the badge on reload (#2148).
+   active?: boolean
++  pooled?: boolean
+ }
+ 
+ // GET /api/control/info
+ export type ControlFeature =
+   | 'profiles'
++  | 'subscription-pool'
+   | 'logs-sse'
+   | 'kernel-control'
+   | 'system-proxy'
